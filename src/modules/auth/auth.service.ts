@@ -6,8 +6,8 @@ import { BCRYPT_COST } from '../../config/constants.js';
 import { AppError } from '../../lib/app-error.js';
 import type { TokenPair } from '../../lib/auth-cookies.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../lib/jwt.js';
+import { isUniqueViolation } from '../../lib/prisma-errors.js';
 import { prisma } from '../../lib/prisma.js';
-import { Prisma } from '../../generated/prisma/client.js';
 import type { LoginInput, RegisterInput } from './auth.validation.js';
 
 /** All business rules for `/auth` (ARCHITECTURE.md §6). Controllers stay transport-only. */
@@ -35,8 +35,6 @@ export interface AuthResult {
   user: PublicUser;
   tokens: TokenPair;
 }
-
-const UNIQUE_VIOLATION = 'P2002';
 
 function issueTokens(userId: string, tokenVersion: number): TokenPair {
   return {
@@ -78,7 +76,7 @@ export async function registerUser({ name, email, password }: RegisterInput): Pr
     // A new account always starts at tokenVersion 0.
     return { user, tokens: issueTokens(user.id, 0) };
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
+    if (isUniqueViolation(error)) {
       throw new AppError('CONFLICT', 'An account with this email already exists.');
     }
     throw error;

@@ -9,7 +9,9 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { globalRateLimiter } from './middleware/rate-limit.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { authRouter } from './modules/auth/auth.routes.js';
+import { categoriesRouter } from './modules/categories/categories.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
+import { transactionsRouter } from './modules/transactions/transactions.routes.js';
 
 /**
  * Builds the Express application: middleware chain, routes, error handling
@@ -34,6 +36,8 @@ export function createApp(): Express {
   app.use(`${API_BASE_PATH}${HEALTH_PATH}`, healthRouter);
 
   app.use(`${API_BASE_PATH}/auth`, authRouter);
+  app.use(`${API_BASE_PATH}/categories`, categoriesRouter);
+  app.use(`${API_BASE_PATH}/transactions`, transactionsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

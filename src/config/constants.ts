@@ -30,6 +30,37 @@ export const AUTH_COOKIES = {
   refresh: { name: 'finora_rt', path: `${API_BASE_PATH}/auth` },
 } as const;
 
+/**
+ * Shared request validation limits (ARCHITECTURE.md §7). Every module validates against these
+ * rather than its own copy of the numbers.
+ */
+
+/** Money is always positive and never more precise than the `Decimal(14,2)` columns (R-D2). */
+export const MONEY_MIN = 0.01;
+export const MONEY_MAX = 999_999_999.99;
+export const MONEY_DECIMAL_PLACES = 2;
+
+/** Free-text caps: names (people, categories, goals) and transaction descriptions. */
+export const NAME_MAX_LENGTH = 60;
+export const DESCRIPTION_MAX_LENGTH = 280;
+
+/** Pagination defaults and the hard page-size ceiling (R-B8). */
+export const PAGE_DEFAULT = 1;
+export const PAGE_SIZE_DEFAULT = 20;
+export const PAGE_SIZE_MAX = 100;
+
+/**
+ * `GET /categories` is a plain list in the contract (§7), so the only way to keep the response
+ * bounded (R-B8) is to bound the collection itself. Far above what anyone organises by hand.
+ */
+export const MAX_CATEGORIES_PER_USER = 200;
+
+/**
+ * A transaction may be dated at most one day ahead (R-V3): enough for a timezone that is ahead
+ * of the server, not enough to book next month's spending.
+ */
+export const FUTURE_DATE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
+
 /** Rate limit defaults (R-B10). Route-specific limiters are added by their own phase. */
 export const RATE_LIMITS = {
   global: { windowMs: 15 * 60 * 1000, limit: 300 },

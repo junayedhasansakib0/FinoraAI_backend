@@ -1,10 +1,9 @@
 import { z } from 'zod';
 
-import { PASSWORD_MIN_LENGTH } from '../../config/constants.js';
+import { NAME_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../../config/constants.js';
 
 /** Request schemas for `/auth` (ARCHITECTURE.md §7 shared validation rules). */
 
-const NAME_MAX = 60;
 const EMAIL_MAX = 254;
 /** bcrypt only reads the first 72 bytes; a cap also keeps hashing cost bounded (R-A1). */
 const PASSWORD_MAX = 72;
@@ -17,7 +16,7 @@ const email = z
   .pipe(z.email('must be a valid email address').max(EMAIL_MAX));
 
 export const registerSchema = z.object({
-  name: z.string().trim().min(1, 'is required').max(NAME_MAX),
+  name: z.string().trim().min(1, 'is required').max(NAME_MAX_LENGTH),
   email,
   password: z
     .string()
