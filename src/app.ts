@@ -10,6 +10,7 @@ import { globalRateLimiter } from './middleware/rate-limit.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { categoriesRouter } from './modules/categories/categories.routes.js';
+import { dashboardRouter } from './modules/dashboard/dashboard.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { transactionsRouter } from './modules/transactions/transactions.routes.js';
 
@@ -38,6 +39,7 @@ export function createApp(): Express {
   app.use(`${API_BASE_PATH}/auth`, authRouter);
   app.use(`${API_BASE_PATH}/categories`, categoriesRouter);
   app.use(`${API_BASE_PATH}/transactions`, transactionsRouter);
+  app.use(`${API_BASE_PATH}/dashboard`, dashboardRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

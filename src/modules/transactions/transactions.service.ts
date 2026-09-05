@@ -12,7 +12,8 @@ import type {
 
 /** All business rules for `/transactions` (ARCHITECTURE.md §7). */
 
-const TRANSACTION_SELECT = {
+/** The row shape §7 publishes for a transaction. The dashboard borrows it rather than copying it. */
+export const TRANSACTION_SELECT = {
   id: true,
   type: true,
   amount: true,
@@ -57,7 +58,7 @@ function notFound(): AppError {
   return new AppError('NOT_FOUND', 'Transaction not found.');
 }
 
-function toPublicTransaction(row: TransactionRow): PublicTransaction {
+export function toPublicTransaction(row: TransactionRow): PublicTransaction {
   return { ...row, amount: row.amount.toFixed(MONEY_DECIMAL_PLACES) };
 }
 

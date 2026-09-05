@@ -56,6 +56,20 @@ export const PAGE_SIZE_MAX = 100;
 export const MAX_CATEGORIES_PER_USER = 200;
 
 /**
+ * Dashboard shape (ARCHITECTURE.md §7). Six months is the analytics default and what §3's bar
+ * chart draws; a year is the ceiling, so the series stays bounded whatever is asked for (R-B8).
+ */
+export const ANALYTICS_MONTHS_DEFAULT = 6;
+export const ANALYTICS_MONTHS_MAX = 12;
+
+/** The summary carries the five newest transactions (§7). */
+export const DASHBOARD_RECENT_LIMIT = 5;
+
+/** A donut stops being readable past a handful of slices, so the rest are rolled up (R-B8). */
+export const DASHBOARD_BREAKDOWN_LIMIT = 8;
+
+
+/**
  * A transaction may be dated at most one day ahead (R-V3): enough for a timezone that is ahead
  * of the server, not enough to book next month's spending.
  */

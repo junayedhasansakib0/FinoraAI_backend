@@ -1,11 +1,11 @@
 import { Prisma } from '../../src/generated/prisma/client.js';
 
 /**
- * In-memory stand-in for the Prisma singleton, shared by the categories and transactions
- * suites. R-T2 rules out the hosted database and this machine has no disposable Postgres, so
- * the double implements exactly the queries those two services issue — nothing more. Anything
- * unsupported throws instead of quietly returning a wrong answer, so a service that starts
- * using a new operator fails the suite rather than passing on a lie.
+ * In-memory stand-in for the Prisma singleton, shared by the categories, transactions and
+ * dashboard suites. R-T2 rules out the hosted database and this machine has no disposable
+ * Postgres, so the double implements exactly the queries those services issue — nothing more.
+ * Anything unsupported throws instead of quietly returning a wrong answer, so a service that
+ * starts using a new operator fails the suite rather than passing on a lie.
  */
 
 let sequence = 0;
@@ -13,6 +13,12 @@ let sequence = 0;
 function nextId(prefix: string): string {
   sequence += 1;
   return `${prefix}_${String(sequence)}`;
+}
+
+/** Only the profile fields a service reads: month boundaries follow the timezone (D9). */
+export interface StoredUser {
+  id: string;
+  timezone: string;
 }
 
 export interface StoredCategory {
@@ -39,23 +45,44 @@ export interface StoredBudget {
   id: string;
   userId: string;
   categoryId: string | null;
+  amount: Prisma.Decimal;
+  month: number;
+  year: number;
+}
+
+export interface StoredSavingsGoal {
+  id: string;
+  userId: string;
+  targetAmount: Prisma.Decimal;
+  currentAmount: Prisma.Decimal;
 }
 
 export const store = {
+  users: [] as StoredUser[],
   categories: [] as StoredCategory[],
   transactions: [] as StoredTransaction[],
   budgets: [] as StoredBudget[],
+  savingsGoals: [] as StoredSavingsGoal[],
 };
 
 export function resetStore(): void {
+  store.users = [];
   store.categories = [];
   store.transactions = [];
   store.budgets = [];
+  store.savingsGoals = [];
   sequence = 0;
 }
 
 /** Fixed timestamp so ordering in the fixtures depends only on the fields under test. */
 const SEEDED_AT = new Date('2026-01-01T00:00:00.000Z');
+
+/** The id is given rather than generated: it has to match the id the test's token carries. */
+export function seedUser(input: { id: string; timezone?: string }): StoredUser {
+  const row: StoredUser = { id: input.id, timezone: input.timezone ?? 'UTC' };
+  store.users.push(row);
+  return row;
+}
 
 export function seedCategory(input: {
   userId: string;
@@ -97,13 +124,42 @@ export function seedTransaction(input: {
   return row;
 }
 
-export function seedBudget(input: { userId: string; categoryId: string | null }): StoredBudget {
+/**
+ * `amount`, `month` and `year` matter only where a budget is being read as money. Left out, the
+ * row lands on month 0 of year 0, which no real lookup can match — so a budget seeded merely to
+ * block a category delete cannot also pass for someone's overall budget.
+ */
+export function seedBudget(input: {
+  userId: string;
+  categoryId: string | null;
+  amount?: string;
+  month?: number;
+  year?: number;
+}): StoredBudget {
   const row: StoredBudget = {
     id: nextId('bud'),
     userId: input.userId,
     categoryId: input.categoryId,
+    amount: new Prisma.Decimal(input.amount ?? 0),
+    month: input.month ?? 0,
+    year: input.year ?? 0,
   };
   store.budgets.push(row);
+  return row;
+}
+
+export function seedSavingsGoal(input: {
+  userId: string;
+  targetAmount: string;
+  currentAmount: string;
+}): StoredSavingsGoal {
+  const row: StoredSavingsGoal = {
+    id: nextId('goal'),
+    userId: input.userId,
+    targetAmount: new Prisma.Decimal(input.targetAmount),
+    currentAmount: new Prisma.Decimal(input.currentAmount),
+  };
+  store.savingsGoals.push(row);
   return row;
 }
 
@@ -206,6 +262,13 @@ function matchesWhere(row: object, where: Row): boolean {
           return compareValues(value, operand) >= 0;
         case 'lte':
           return compareValues(value, operand) <= 0;
+        case 'lt':
+          return compareValues(value, operand) < 0;
+        case 'in':
+          return (
+            Array.isArray(operand) &&
+            operand.some((candidate: unknown) => compareValues(value, candidate) === 0)
+          );
         case 'contains':
           return typeof value === 'string' && likeToRegExp(String(operand)).test(value);
         default:
@@ -431,17 +494,21 @@ const transaction = {
 
   /** Sums are produced by the store, never by the service (R-D3). */
   groupBy(args: { by: string[]; where?: Row }): Promise<Row[]> {
-    if (args.by.length !== 1 || args.by[0] !== 'type') {
-      throw new Error('db-double: groupBy only models `by: ["type"]`');
+    const [field] = args.by;
+
+    if (args.by.length !== 1 || (field !== 'type' && field !== 'categoryId')) {
+      throw new Error('db-double: groupBy models only `by: ["type"]` and `by: ["categoryId"]`');
     }
 
-    const sums = new Map<string, Prisma.Decimal>();
+    const sums = new Map<string | null, Prisma.Decimal>();
 
     for (const row of filterRows(store.transactions, args.where)) {
-      sums.set(row.type, (sums.get(row.type) ?? new Prisma.Decimal(0)).plus(row.amount));
+      const key = field === 'type' ? row.type : row.categoryId;
+
+      sums.set(key, (sums.get(key) ?? new Prisma.Decimal(0)).plus(row.amount));
     }
 
-    return Promise.resolve([...sums].map(([type, amount]) => ({ type, _sum: { amount } })));
+    return Promise.resolve([...sums].map(([key, amount]) => ({ [field]: key, _sum: { amount } })));
   },
 
   create(args: { data: TransactionData & { userId: string }; select?: Select }): Promise<Row> {
@@ -483,9 +550,68 @@ const transaction = {
   },
 };
 
+interface ReadArgs {
+  where?: Row;
+  select?: Record<string, boolean>;
+}
+
+function firstOrNull<T extends object>(
+  rows: T[],
+  select: Record<string, boolean> | undefined,
+): Row | null {
+  const row = rows[0];
+
+  if (row === undefined) {
+    return null;
+  }
+
+  // The same cast `fieldOf` makes: a stored row is a plain object, whatever its interface calls it.
+  return select === undefined ? { ...(row as Row) } : projectFields(row, select);
+}
+
+const user = {
+  findUnique({ where, select }: ReadArgs): Promise<Row | null> {
+    return Promise.resolve(firstOrNull(filterRows(store.users, where), select));
+  },
+};
+
 const budget = {
-  count({ where }: { where?: Row }): Promise<number> {
+  count({ where }: ReadArgs): Promise<number> {
     return Promise.resolve(filterRows(store.budgets, where).length);
+  },
+
+  findFirst({ where, select }: ReadArgs): Promise<Row | null> {
+    return Promise.resolve(firstOrNull(filterRows(store.budgets, where), select));
+  },
+};
+
+const savingsGoal = {
+  /** `_sum` of nothing is null in Postgres, and Prisma passes that through — so the double does. */
+  aggregate(args: {
+    where?: Row;
+    _sum?: Record<string, boolean>;
+    _count?: { _all?: boolean };
+  }): Promise<Row> {
+    const rows = filterRows(store.savingsGoals, args.where);
+    const sums: Row = {};
+
+    for (const field of Object.keys(args._sum ?? {})) {
+      let total = new Prisma.Decimal(0);
+
+      for (const row of rows) {
+        const value = fieldOf(row, field);
+
+        if (!(value instanceof Prisma.Decimal)) {
+          throw new Error(`db-double: cannot sum savings goal field "${field}"`);
+        }
+
+        total = total.plus(value);
+      }
+
+      sums[field] = rows.length === 0 ? null : total;
+    }
+
+    return Promise.resolve({ _sum: sums, _count: { _all: rows.length } });
   },
 };
 
@@ -505,4 +631,11 @@ function runTransaction(argument: unknown): Promise<unknown> {
   throw new Error('db-double: unsupported $transaction argument');
 }
 
-export const prismaDouble = { category, transaction, budget, $transaction: runTransaction };
+export const prismaDouble = {
+  user,
+  category,
+  transaction,
+  budget,
+  savingsGoal,
+  $transaction: runTransaction,
+};
