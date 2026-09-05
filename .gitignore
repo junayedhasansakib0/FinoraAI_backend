@@ -1,5 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment — never commit real values (ARCHITECTURE.md §11)
 .env
 .env.*
 !.env.example
 
-node_modules/
+# Build output
+dist/
+*.tsbuildinfo
+
+# Generated Prisma client — recreated by `npm run db:generate` and by `npm run build`
+src/generated/
+
+# Test / coverage output
+coverage/
+.vitest/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editors & OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp

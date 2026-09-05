@@ -1,0 +1,111 @@
+// Mirrors ARCHITECTURE.md §5 exactly — that document is the source of truth for this schema.
+// Money is always Decimal(14,2), never Float (R-D2). User-owned rows cascade on user delete;
+// Transaction.categoryId is SetNull so spending history survives a category delete (R-D7).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7 removed `url`/`directUrl` from the schema: migrations read their connection
+// string from prisma.config.ts and the runtime client connects through a driver adapter
+// (see src/lib/prisma.ts).
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique // stored lowercase
+  passwordHash String
+  currency     String   @default("USD") // ISO-4217 base currency
+  timezone     String   @default("UTC")
+  tokenVersion Int      @default(0) // bump invalidates refresh tokens
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  transactions Transaction[]
+  categories   Category[]
+  budgets      Budget[]
+  goals        SavingsGoal[]
+  reports      AIReport[]
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  type      String // "income" | "expense"
+  isDefault Boolean  @default(false) // seeded from the system catalog at signup
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@unique([userId, name, type])
+  @@index([userId, type])
+}
+
+model Transaction {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String // "income" | "expense"
+  amount      Decimal   @db.Decimal(14, 2)
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  description String?   @db.VarChar(280)
+  date        DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, date(sort: Desc)])
+  @@index([userId, type, date])
+  @@index([userId, categoryId])
+}
+
+model Budget {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String? // null = overall monthly budget
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  amount     Decimal   @db.Decimal(14, 2)
+  month      Int // 1..12
+  year       Int
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, year, month])
+  // uniqueness (userId, categoryId, month, year) is enforced in the service layer:
+  // nullable categoryId makes a DB unique index unreliable for NULLs (R-D6)
+}
+
+model SavingsGoal {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  targetAmount  Decimal  @db.Decimal(14, 2)
+  currentAmount Decimal  @default(0) @db.Decimal(14, 2)
+  deadline      DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, deadline])
+}
+
+model AIReport {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // SPENDING_ANALYSIS | MONTHLY_SUMMARY | SAVINGS_RECOMMENDATIONS | BUDGET_RECOMMENDATIONS | QA
+  content   Json // validated AI output; QA rows store { question, answer }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, type, createdAt(sort: Desc)])
+}
