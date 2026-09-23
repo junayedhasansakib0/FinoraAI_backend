@@ -548,6 +548,33 @@ const transaction = {
 
     return Promise.resolve({ count: doomed.size });
   },
+
+  aggregate(args: {
+    where?: Row;
+    _sum?: Record<string, boolean>;
+    _count?: { _all?: boolean };
+  }): Promise<Row> {
+    const rows = filterRows(store.transactions, args.where);
+    const sums: Row = {};
+
+    for (const field of Object.keys(args._sum ?? {})) {
+      let total = new Prisma.Decimal(0);
+
+      for (const row of rows) {
+        const value = fieldOf(row, field);
+
+        if (!(value instanceof Prisma.Decimal)) {
+          throw new Error(`db-double: cannot sum transaction field "${field}"`);
+        }
+
+        total = total.plus(value);
+      }
+
+      sums[field] = rows.length === 0 ? null : total;
+    }
+
+    return Promise.resolve({ _sum: sums, _count: { _all: rows.length } });
+  },
 };
 
 interface ReadArgs {
@@ -575,13 +602,122 @@ const user = {
   },
 };
 
+interface CategoryRelationSpec {
+  select?: Record<string, boolean>;
+}
+
+interface BudgetSelectSpec {
+  select?: Select;
+  include?: { category?: boolean | CategoryRelationSpec };
+}
+
+function projectBudget(row: StoredBudget, spec: BudgetSelectSpec | undefined): Row {
+  const result: Row = { ...row };
+  const include = spec?.include;
+  const select = spec?.select;
+
+  if (include?.category) {
+    const categorySpec = include.category;
+    const related = store.categories.find((category) => category.id === row.categoryId);
+    const selectFields = typeof categorySpec === 'object' ? categorySpec.select : undefined;
+    result.category =
+      related === undefined
+        ? null
+        : selectFields
+          ? projectFields(related, selectFields)
+          : { ...related };
+  }
+
+  if (select) {
+    const projection: Row = {};
+    for (const [field, val] of Object.entries(select)) {
+      if (val === true) {
+        projection[field] = fieldOf(row, field);
+      } else if (field === 'category' && val !== false) {
+        const related = store.categories.find((category) => category.id === row.categoryId);
+        const selectFields = typeof val === 'object' ? val.select : undefined;
+        projection.category =
+          related === undefined
+            ? null
+            : selectFields
+              ? projectFields(related, selectFields)
+              : { ...related };
+      }
+    }
+    return projection;
+  }
+
+  return result;
+}
+
+interface BudgetFindArgs {
+  where?: Row;
+  select?: Select;
+  include?: { category?: boolean | CategoryRelationSpec };
+  orderBy?: OrderBy[];
+}
+
 const budget = {
   count({ where }: ReadArgs): Promise<number> {
     return Promise.resolve(filterRows(store.budgets, where).length);
   },
 
-  findFirst({ where, select }: ReadArgs): Promise<Row | null> {
-    return Promise.resolve(firstOrNull(filterRows(store.budgets, where), select));
+  findFirst({ where, select, include }: BudgetFindArgs = {}): Promise<Row | null> {
+    const row = filterRows(store.budgets, where)[0];
+    return Promise.resolve(row === undefined ? null : projectBudget(row, { select, include }));
+  },
+
+  findMany({ where, select, include, orderBy }: BudgetFindArgs = {}): Promise<Row[]> {
+    const rows = sortRows(filterRows(store.budgets, where), orderBy);
+    return Promise.resolve(rows.map((row) => projectBudget(row, { select, include })));
+  },
+
+  create(args: {
+    data: {
+      userId: string;
+      categoryId: string | null;
+      amount: Prisma.Decimal;
+      month: number;
+      year: number;
+    };
+    select?: Select;
+    include?: { category?: boolean | CategoryRelationSpec };
+  }): Promise<Row> {
+    const row: StoredBudget = {
+      id: nextId('bud'),
+      userId: args.data.userId,
+      categoryId: args.data.categoryId ?? null,
+      amount: args.data.amount,
+      month: args.data.month,
+      year: args.data.year,
+    };
+    store.budgets.push(row);
+    return Promise.resolve(projectBudget(row, { select: args.select, include: args.include }));
+  },
+
+  update(args: {
+    where: Row;
+    data: { amount?: Prisma.Decimal };
+    select?: Select;
+    include?: { category?: boolean | CategoryRelationSpec };
+  }): Promise<Row> {
+    const row = filterRows(store.budgets, args.where)[0];
+    if (row === undefined) {
+      return Promise.reject(knownRequestError('P2025', 'Record to update not found'));
+    }
+    if (args.data.amount !== undefined) {
+      row.amount = args.data.amount;
+    }
+    return Promise.resolve(projectBudget(row, { select: args.select, include: args.include }));
+  },
+
+  delete(args: { where: Row }): Promise<Row> {
+    const row = filterRows(store.budgets, args.where)[0];
+    if (row === undefined) {
+      return Promise.reject(knownRequestError('P2025', 'Record to delete does not exist'));
+    }
+    store.budgets = store.budgets.filter((b) => b.id !== row.id);
+    return Promise.resolve({ ...row });
   },
 };
 

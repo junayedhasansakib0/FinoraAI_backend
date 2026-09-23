@@ -128,15 +128,16 @@ function shiftMonth(year: number, month: number, delta: number): { year: number;
   };
 }
 
-function rangeFor(year: number, month: number, timeZone: string): MonthRange {
+export function rangeFor(year: number, month: number, timeZone: string): MonthRange {
+  const zone = resolveTimeZone(timeZone);
   const next = shiftMonth(year, month, 1);
 
   return {
     month,
     year,
-    timeZone,
-    start: startOfMonth(year, month, timeZone),
-    end: startOfMonth(next.year, next.month, timeZone),
+    timeZone: zone,
+    start: startOfMonth(year, month, zone),
+    end: startOfMonth(next.year, next.month, zone),
   };
 }
 
