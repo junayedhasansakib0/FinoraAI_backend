@@ -79,4 +79,9 @@ export const FUTURE_DATE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
 export const RATE_LIMITS = {
   global: { windowMs: 15 * 60 * 1000, limit: 300 },
   auth: { windowMs: 15 * 60 * 1000, limit: 20 },
+  /**
+   * External-backed endpoints (currency, crypto). Keyed per user rather than per IP so one
+   * account cannot burn a shared upstream budget, and the cache absorbs the rest (R-B10, R-E6).
+   */
+  external: { windowMs: 60 * 1000, limit: 30 },
 } as const;

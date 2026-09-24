@@ -61,6 +61,11 @@ const envSchema = z.object({
   /** Distinct secrets so an access token can never be replayed as a refresh token (R-A2). */
   JWT_ACCESS_SECRET: z.string().min(32, 'must be at least 32 characters'),
   JWT_REFRESH_SECRET: z.string().min(32, 'must be at least 32 characters'),
+  /**
+   * Optional CoinGecko demo key (Phase 9). The keyless free tier works without it; when set it
+   * is sent as the `x-cg-demo-api-key` header and only ever read here on the server (R-A4).
+   */
+  COINGECKO_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

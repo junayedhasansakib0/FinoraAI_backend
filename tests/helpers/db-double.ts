@@ -53,8 +53,10 @@ export interface StoredBudget {
 export interface StoredSavingsGoal {
   id: string;
   userId: string;
+  name: string;
   targetAmount: Prisma.Decimal;
   currentAmount: Prisma.Decimal;
+  deadline: Date;
 }
 
 export const store = {
@@ -148,16 +150,25 @@ export function seedBudget(input: {
   return row;
 }
 
+/**
+ * `name` and `deadline` are optional so the dashboard suite — which only sums `targetAmount` and
+ * `currentAmount` — keeps seeding goals with two fields. A goal seeded for the goals suite passes
+ * both, since its deadline reckoning depends on them.
+ */
 export function seedSavingsGoal(input: {
   userId: string;
   targetAmount: string;
   currentAmount: string;
+  name?: string;
+  deadline?: string;
 }): StoredSavingsGoal {
   const row: StoredSavingsGoal = {
     id: nextId('goal'),
     userId: input.userId,
+    name: input.name ?? 'Goal',
     targetAmount: new Prisma.Decimal(input.targetAmount),
     currentAmount: new Prisma.Decimal(input.currentAmount),
+    deadline: new Date(input.deadline ?? '2099-12-31T23:59:59.999Z'),
   };
   store.savingsGoals.push(row);
   return row;
@@ -721,6 +732,27 @@ const budget = {
   },
 };
 
+interface SavingsGoalFindArgs {
+  where?: Row;
+  select?: Record<string, boolean>;
+  orderBy?: OrderBy[];
+}
+
+interface SavingsGoalData {
+  userId?: string;
+  name?: string;
+  targetAmount?: Prisma.Decimal;
+  currentAmount?: Prisma.Decimal;
+  deadline?: Date;
+}
+
+function projectSavingsGoal(
+  row: StoredSavingsGoal,
+  select: Record<string, boolean> | undefined,
+): Row {
+  return select === undefined ? { ...row } : projectFields(row, select);
+}
+
 const savingsGoal = {
   /** `_sum` of nothing is null in Postgres, and Prisma passes that through — so the double does. */
   aggregate(args: {
@@ -748,6 +780,74 @@ const savingsGoal = {
     }
 
     return Promise.resolve({ _sum: sums, _count: { _all: rows.length } });
+  },
+
+  findMany({ where, select, orderBy }: SavingsGoalFindArgs = {}): Promise<Row[]> {
+    const rows = sortRows(filterRows(store.savingsGoals, where), orderBy);
+
+    return Promise.resolve(rows.map((row) => projectSavingsGoal(row, select)));
+  },
+
+  findFirst({ where, select }: SavingsGoalFindArgs = {}): Promise<Row | null> {
+    const row = filterRows(store.savingsGoals, where)[0];
+
+    return Promise.resolve(row === undefined ? null : projectSavingsGoal(row, select));
+  },
+
+  create(args: {
+    data: SavingsGoalData & { userId: string; name: string; deadline: Date };
+    select?: Record<string, boolean>;
+  }): Promise<Row> {
+    const row: StoredSavingsGoal = {
+      id: nextId('goal'),
+      userId: args.data.userId,
+      name: args.data.name,
+      targetAmount: args.data.targetAmount ?? new Prisma.Decimal(0),
+      currentAmount: args.data.currentAmount ?? new Prisma.Decimal(0),
+      deadline: args.data.deadline,
+    };
+    store.savingsGoals.push(row);
+
+    return Promise.resolve(projectSavingsGoal(row, args.select));
+  },
+
+  update(args: {
+    where: Row;
+    data: SavingsGoalData;
+    select?: Record<string, boolean>;
+  }): Promise<Row> {
+    const row = filterRows(store.savingsGoals, args.where)[0];
+
+    if (row === undefined) {
+      return Promise.reject(knownRequestError('P2025', 'Record to update not found'));
+    }
+
+    if (args.data.name !== undefined) {
+      row.name = args.data.name;
+    }
+    if (args.data.targetAmount !== undefined) {
+      row.targetAmount = args.data.targetAmount;
+    }
+    if (args.data.currentAmount !== undefined) {
+      row.currentAmount = args.data.currentAmount;
+    }
+    if (args.data.deadline !== undefined) {
+      row.deadline = args.data.deadline;
+    }
+
+    return Promise.resolve(projectSavingsGoal(row, args.select));
+  },
+
+  delete(args: { where: Row }): Promise<Row> {
+    const row = filterRows(store.savingsGoals, args.where)[0];
+
+    if (row === undefined) {
+      return Promise.reject(knownRequestError('P2025', 'Record to delete does not exist'));
+    }
+
+    store.savingsGoals = store.savingsGoals.filter((candidate) => candidate.id !== row.id);
+
+    return Promise.resolve({ ...row });
   },
 };
 

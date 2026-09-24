@@ -55,6 +55,9 @@ vi.mock('../src/middleware/rate-limit.js', () => ({
     state.authLimiterHits += 1;
     next();
   },
+  externalApiRateLimiter: (_req: Request, _res: Response, next: NextFunction) => {
+    next();
+  },
 }));
 
 vi.mock('../src/lib/prisma.js', async () => {

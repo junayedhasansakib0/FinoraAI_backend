@@ -11,7 +11,10 @@ import { requestLogger } from './middleware/request-logger.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { budgetsRouter } from './modules/budgets/budgets.routes.js';
 import { categoriesRouter } from './modules/categories/categories.routes.js';
+import { cryptoRouter } from './modules/crypto/crypto.routes.js';
+import { currencyRouter } from './modules/currency/currency.routes.js';
 import { dashboardRouter } from './modules/dashboard/dashboard.routes.js';
+import { savingsGoalsRouter } from './modules/goals/goals.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { transactionsRouter } from './modules/transactions/transactions.routes.js';
 
@@ -42,6 +45,9 @@ export function createApp(): Express {
   app.use(`${API_BASE_PATH}/transactions`, transactionsRouter);
   app.use(`${API_BASE_PATH}/dashboard`, dashboardRouter);
   app.use(`${API_BASE_PATH}/budgets`, budgetsRouter);
+  app.use(`${API_BASE_PATH}/savings-goals`, savingsGoalsRouter);
+  app.use(`${API_BASE_PATH}/currency`, currencyRouter);
+  app.use(`${API_BASE_PATH}/crypto`, cryptoRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
