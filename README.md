@@ -78,7 +78,8 @@ curl http://localhost:5000/health
 | `npm run dev` | Watch mode (`tsx watch`) |
 | `npm run build` | Generate the Prisma client, compile to `dist/` |
 | `npm start` | Run the compiled server |
-| `npm test` | Vitest (unit + Supertest API tests) |
+| `npm test` | Vitest (unit + Supertest API tests) — deterministic, all external services mocked |
+| `npm run smoke` | **Live** provider check (real Frankfurter / CoinGecko / AI calls) — opt-in, never CI; needs a bootable `.env`, and the `ai` check needs the configured provider's key. Subset: `npm run smoke -- currency crypto`. See `IMPLEMENTATION.md` (Phase 10). |
 | `npm run lint` / `lint:fix` | ESLint (with autofix) |
 | `npm run format` / `format:check` | Prettier write / check (CI) |
 | `npm run typecheck` | `tsc --noEmit` |

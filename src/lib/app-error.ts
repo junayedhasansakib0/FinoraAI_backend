@@ -6,6 +6,9 @@ export const ERROR_STATUS = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  // The request was well-formed but there is not enough of the user's own data to act on
+  // (an AI report asked for before any transactions exist, ARCHITECTURE.md §7 AI).
+  NO_DATA: 422,
   RATE_LIMITED: 429,
   INTERNAL: 500,
   UPSTREAM_UNAVAILABLE: 503,

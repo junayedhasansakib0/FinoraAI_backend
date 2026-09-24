@@ -15,10 +15,12 @@ function nextId(prefix: string): string {
   return `${prefix}_${String(sequence)}`;
 }
 
-/** Only the profile fields a service reads: month boundaries follow the timezone (D9). */
+/** Only the profile fields a service reads: month boundaries follow the timezone (D9), and the AI
+ *  context reports figures in the user's base currency. */
 export interface StoredUser {
   id: string;
   timezone: string;
+  currency: string;
 }
 
 export interface StoredCategory {
@@ -59,12 +61,22 @@ export interface StoredSavingsGoal {
   deadline: Date;
 }
 
+/** A persisted AI report (R-I7). `content` holds the `{ data, scope }` the reports service stores. */
+export interface StoredAIReport {
+  id: string;
+  userId: string;
+  type: string;
+  content: unknown;
+  createdAt: Date;
+}
+
 export const store = {
   users: [] as StoredUser[],
   categories: [] as StoredCategory[],
   transactions: [] as StoredTransaction[],
   budgets: [] as StoredBudget[],
   savingsGoals: [] as StoredSavingsGoal[],
+  aiReports: [] as StoredAIReport[],
 };
 
 export function resetStore(): void {
@@ -73,6 +85,7 @@ export function resetStore(): void {
   store.transactions = [];
   store.budgets = [];
   store.savingsGoals = [];
+  store.aiReports = [];
   sequence = 0;
 }
 
@@ -80,8 +93,12 @@ export function resetStore(): void {
 const SEEDED_AT = new Date('2026-01-01T00:00:00.000Z');
 
 /** The id is given rather than generated: it has to match the id the test's token carries. */
-export function seedUser(input: { id: string; timezone?: string }): StoredUser {
-  const row: StoredUser = { id: input.id, timezone: input.timezone ?? 'UTC' };
+export function seedUser(input: { id: string; timezone?: string; currency?: string }): StoredUser {
+  const row: StoredUser = {
+    id: input.id,
+    timezone: input.timezone ?? 'UTC',
+    currency: input.currency ?? 'USD',
+  };
   store.users.push(row);
   return row;
 }
@@ -171,6 +188,27 @@ export function seedSavingsGoal(input: {
     deadline: new Date(input.deadline ?? '2099-12-31T23:59:59.999Z'),
   };
   store.savingsGoals.push(row);
+  return row;
+}
+
+/**
+ * A stored AI report (R-I7). `createdAt` is explicit so a test can place a report inside or outside
+ * the 24h reuse window; it defaults to the shared seed instant like the other fixtures.
+ */
+export function seedAIReport(input: {
+  userId: string;
+  type: string;
+  content: unknown;
+  createdAt?: Date;
+}): StoredAIReport {
+  const row: StoredAIReport = {
+    id: nextId('report'),
+    userId: input.userId,
+    type: input.type,
+    content: input.content,
+    createdAt: input.createdAt ?? SEEDED_AT,
+  };
+  store.aiReports.push(row);
   return row;
 }
 
@@ -851,6 +889,40 @@ const savingsGoal = {
   },
 };
 
+interface AIReportFindArgs {
+  where?: Row;
+  orderBy?: OrderBy[];
+  take?: number;
+}
+
+const aiReport = {
+  findMany({ where, orderBy, take }: AIReportFindArgs = {}): Promise<Row[]> {
+    const rows = sortRows(filterRows(store.aiReports, where), orderBy);
+    const page = take === undefined ? rows : rows.slice(0, take);
+
+    return Promise.resolve(page.map((row) => ({ ...row })));
+  },
+
+  findFirst({ where, orderBy }: AIReportFindArgs = {}): Promise<Row | null> {
+    const row = sortRows(filterRows(store.aiReports, where), orderBy)[0];
+
+    return Promise.resolve(row === undefined ? null : { ...row });
+  },
+
+  create(args: { data: { userId: string; type: string; content: unknown } }): Promise<Row> {
+    const row: StoredAIReport = {
+      id: nextId('report'),
+      userId: args.data.userId,
+      type: args.data.type,
+      content: args.data.content,
+      createdAt: new Date(),
+    };
+    store.aiReports.push(row);
+
+    return Promise.resolve({ ...row });
+  },
+};
+
 /**
  * Both `$transaction` forms the services use: the batch array, and the interactive callback that
  * receives a client. Isolation is not modelled — a single-threaded store cannot interleave.
@@ -873,5 +945,6 @@ export const prismaDouble = {
   transaction,
   budget,
   savingsGoal,
+  aIReport: aiReport,
   $transaction: runTransaction,
 };

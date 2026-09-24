@@ -23,7 +23,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

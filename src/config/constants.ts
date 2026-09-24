@@ -85,3 +85,54 @@ export const RATE_LIMITS = {
    */
   external: { windowMs: 60 * 1000, limit: 30 },
 } as const;
+
+/**
+ * AI generation limits (R-I6 / R-B10). The per-user caps themselves live in `env`
+ * (`AI_HOURLY_LIMIT` / `AI_DAILY_LIMIT`) so a deployment can tune them; only the fixed window
+ * durations and the provider ceiling live here, so each number has exactly one home (R-Doc3).
+ * The AI Service enforces these caps in-process — the free-tier providers sit far above them,
+ * so this quota, not the upstream, is the limit a user meets first.
+ */
+export const AI_HOURLY_WINDOW_MS = 60 * 60 * 1000;
+export const AI_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Hard ceiling on a single provider call (R-I6). Matches the 20s the AI Service allows. */
+export const AI_PROVIDER_TIMEOUT_MS = 20_000;
+
+/** One generation attempt plus a single repair retry when the first output fails validation (R-I4). */
+export const AI_MAX_GENERATION_ATTEMPTS = 2;
+
+/** Default output-token ceiling for a structured report; keeps responses bounded (R-B8). */
+export const AI_MAX_OUTPUT_TOKENS = 1024;
+
+/**
+ * AI report context shaping (ARCHITECTURE.md §8, PROJECT_CONTEXT.md §5). Context builders emit
+ * aggregates only, over a bounded window and a capped number of categories, so the prompt stays
+ * small and the prompt-injection surface stays tiny (D7, R-I1).
+ */
+
+/** Spending analysis looks back six months of category totals and MoM deltas (§5: "3–6 months"). */
+export const AI_SPENDING_MONTHS = 6;
+
+/** Budget and savings recommendations average the last three months (§5). */
+export const AI_AVERAGE_MONTHS = 3;
+
+/** Never send more than the top handful of categories, mirroring the dashboard donut (R-B8). */
+export const AI_TOP_CATEGORIES = 8;
+
+/**
+ * Rough character budget for a built context, ~1.2k tokens at ~4 chars/token (ARCHITECTURE.md §8).
+ * Builders are bounded by construction; this is the guard a test asserts against.
+ */
+export const AI_CONTEXT_MAX_CHARS = 4_800;
+
+/** A report is reused rather than regenerated while it is younger than 24h (R-I6). */
+export const AI_REPORT_REUSE_MS = 24 * 60 * 60 * 1000;
+
+/** `GET /ai/reports` history page size and its hard ceiling (R-B8). */
+export const AI_REPORTS_HISTORY_DEFAULT = 10;
+export const AI_REPORTS_HISTORY_MAX = 50;
+
+/** Caps on validated AI output (R-I4): a single text field and a single list of points. */
+export const AI_OUTPUT_TEXT_MAX = 800;
+export const AI_OUTPUT_LIST_MAX = 12;

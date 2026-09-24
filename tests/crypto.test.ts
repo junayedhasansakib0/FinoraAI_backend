@@ -74,7 +74,13 @@ const IDS_MARKETS_RAW = [
   },
 ];
 
-let fetchMock: ReturnType<typeof vi.fn>;
+/**
+ * Typed so the mocked implementation's return type is a `Promise`, not the default void: the stubs
+ * below return `Promise.resolve(...)` / `Promise.reject(...)`, which an untyped `vi.fn()` would flag
+ * under `@typescript-eslint/no-misused-promises`. This matches the real `fetch` — a promise-returning
+ * call — without weakening type safety or suppressing the rule.
+ */
+let fetchMock: ReturnType<typeof vi.fn<(input: string | URL) => Promise<unknown>>>;
 
 /** Minimal `Response` stand-in: the integration only reads `ok`, `status`, and `json()`. */
 function jsonResponse(body: unknown, status = 200): unknown {
@@ -110,7 +116,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW));
   __resetCoinGeckoCaches();
-  fetchMock = vi.fn();
+  fetchMock = vi.fn<(input: string | URL) => Promise<unknown>>();
   vi.stubGlobal('fetch', fetchMock);
   stubUpstreamOk();
 });
@@ -134,9 +140,7 @@ describe('auth and validation', () => {
   });
 
   it('rejects a non-positive page with 400 before reaching the upstream', async () => {
-    const response = await request(app)
-      .get(`${BASE}/markets?page=0`)
-      .set('Cookie', session(OWNER));
+    const response = await request(app).get(`${BASE}/markets?page=0`).set('Cookie', session(OWNER));
 
     expect(response.status).toBe(400);
     expect((response.body as ErrorBody).error.code).toBe('VALIDATION_ERROR');
@@ -194,7 +198,8 @@ describe('markets and search shape', () => {
       .set('Cookie', session(OWNER));
 
     expect(response.status).toBe(200);
-    const { coins } = (response.body as SuccessBody<{ coins: Array<{ price: number | null }> }>).data;
+    const { coins } = (response.body as SuccessBody<{ coins: Array<{ price: number | null }> }>)
+      .data;
 
     expect(coins).toHaveLength(1);
     expect(coins[0]?.price).toBe(65_000);
@@ -215,9 +220,7 @@ describe('markets and search shape', () => {
   });
 
   it('returns lightweight, price-free hits from the search endpoint', async () => {
-    const response = await request(app)
-      .get(`${BASE}/search?q=bit`)
-      .set('Cookie', session(OWNER));
+    const response = await request(app).get(`${BASE}/search?q=bit`).set('Cookie', session(OWNER));
 
     expect(response.status).toBe(200);
     const { coins } = (response.body as SuccessBody<{ coins: unknown[] }>).data;
@@ -231,7 +234,9 @@ describe('markets and search shape', () => {
 
 describe('upstream failure and degradation', () => {
   it('maps a 429 rate-limit to a 503 UPSTREAM_UNAVAILABLE with no cache to fall back on', async () => {
-    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse({ error: 'rate limited' }, 429)));
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(jsonResponse({ error: 'rate limited' }, 429)),
+    );
 
     const response = await request(app).get(`${BASE}/markets`).set('Cookie', session(OWNER));
 
@@ -279,7 +284,3 @@ describe('cache TTL', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
-
-
-
-

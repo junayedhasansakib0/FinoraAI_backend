@@ -8,6 +8,7 @@ import { env } from './config/env.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { globalRateLimiter } from './middleware/rate-limit.js';
 import { requestLogger } from './middleware/request-logger.js';
+import { aiRouter } from './modules/ai/ai.routes.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { budgetsRouter } from './modules/budgets/budgets.routes.js';
 import { categoriesRouter } from './modules/categories/categories.routes.js';
@@ -48,6 +49,7 @@ export function createApp(): Express {
   app.use(`${API_BASE_PATH}/savings-goals`, savingsGoalsRouter);
   app.use(`${API_BASE_PATH}/currency`, currencyRouter);
   app.use(`${API_BASE_PATH}/crypto`, cryptoRouter);
+  app.use(`${API_BASE_PATH}/ai`, aiRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

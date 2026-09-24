@@ -62,6 +62,22 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32, 'must be at least 32 characters'),
   JWT_REFRESH_SECRET: z.string().min(32, 'must be at least 32 characters'),
   /**
+   * AI provider keys (Phase 10). All optional so the app boots without AI configured; the
+   * selected provider's absence is reported as `AI_UNAVAILABLE` at call time, not at boot.
+   * Each is read only here on the server and is NEVER logged or sent to the client (R-A4).
+   */
+  GEMINI_API_KEY: z.string().optional(),
+  GROQ_API_KEY: z.string().optional(),
+  OPENROUTER_API_KEY: z.string().optional(),
+  /**
+   * Which provider the AI Service uses (D6). One env change swaps the whole stack; feature
+   * code never names a provider (R-I2). Defaults to `gemini` outside tests, `mock` in tests.
+   */
+  AI_PROVIDER: z.enum(['gemini', 'groq', 'openrouter', 'mock']).optional(),
+  /** Per-user AI quotas (R-B10 / R-I6): hourly and daily generation caps. */
+  AI_HOURLY_LIMIT: z.coerce.number().int().positive().default(15),
+  AI_DAILY_LIMIT: z.coerce.number().int().positive().default(50),
+  /**
    * Optional CoinGecko demo key (Phase 9). The keyless free tier works without it; when set it
    * is sent as the `x-cg-demo-api-key` header and only ever read here on the server (R-A4).
    */

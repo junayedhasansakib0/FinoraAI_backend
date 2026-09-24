@@ -58,7 +58,13 @@ const RATES_RAW = {
   rates: { EUR: 0.9, GBP: 0.75, JPY: 150 },
 };
 
-let fetchMock: ReturnType<typeof vi.fn>;
+/**
+ * Typed so the mocked implementation's return type is a `Promise`, not the default void: the stubs
+ * below return `Promise.resolve(...)` / `Promise.reject(...)`, which an untyped `vi.fn()` would flag
+ * under `@typescript-eslint/no-misused-promises`. This matches the real `fetch` — a promise-returning
+ * call — without weakening type safety or suppressing the rule.
+ */
+let fetchMock: ReturnType<typeof vi.fn<(input: string | URL) => Promise<unknown>>>;
 
 /** Minimal `Response` stand-in: the integration only reads `ok`, `status`, and `json()`. */
 function jsonResponse(body: unknown, status = 200): unknown {
@@ -90,7 +96,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW));
   __resetFrankfurterCaches();
-  fetchMock = vi.fn();
+  fetchMock = vi.fn<(input: string | URL) => Promise<unknown>>();
   vi.stubGlobal('fetch', fetchMock);
   stubUpstreamOk();
 });
@@ -184,7 +190,9 @@ describe('rates and convert shape', () => {
 
 describe('upstream failure and degradation', () => {
   it('maps a 429 rate-limit to a 503 UPSTREAM_UNAVAILABLE with no cache to fall back on', async () => {
-    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse({ error: 'rate limited' }, 429)));
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(jsonResponse({ error: 'rate limited' }, 429)),
+    );
 
     const response = await request(app).get(`${BASE}/rates`).set('Cookie', session(OWNER));
 
@@ -232,4 +240,3 @@ describe('cache TTL', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
-
