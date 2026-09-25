@@ -1,6 +1,10 @@
 import { z, type ZodType } from 'zod';
 
-import { AI_OUTPUT_LIST_MAX, AI_OUTPUT_TEXT_MAX } from '../../config/constants.js';
+import {
+  AI_OUTPUT_LIST_MAX,
+  AI_OUTPUT_TEXT_MAX,
+  AI_QA_ANSWER_MAX,
+} from '../../config/constants.js';
 
 import type { ReportType } from './ai.types.js';
 
@@ -63,7 +67,17 @@ export function outputSchemaFor(type: ReportType): ZodType {
   return REPORT_OUTPUT_SCHEMAS[type];
 }
 
+/**
+ * The Q&A answer's shape (Phase 12, R-I4). Untrusted model output like the reports above: a single
+ * non-empty, length-capped plain-text string the client renders as text, never HTML (R-I5). The cap
+ * is `AI_QA_ANSWER_MAX` — larger than a report caption because an answer may span a short paragraph.
+ */
+export const qaOutputSchema = z.object({
+  answer: z.string().min(1).max(AI_QA_ANSWER_MAX),
+});
+
 export type SpendingAnalysisOutput = z.infer<typeof spendingAnalysisOutput>;
 export type MonthlySummaryOutput = z.infer<typeof monthlySummaryOutput>;
 export type SavingsRecommendationsOutput = z.infer<typeof savingsRecommendationsOutput>;
 export type BudgetRecommendationsOutput = z.infer<typeof budgetRecommendationsOutput>;
+export type QAOutput = z.infer<typeof qaOutputSchema>;

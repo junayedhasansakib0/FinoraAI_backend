@@ -4,9 +4,11 @@ import { sendSuccess } from '../../lib/api-response.js';
 import { getUserId } from '../../middleware/auth.js';
 import { getValidatedQuery } from '../../middleware/validate.js';
 
+import { answerQuestion } from './chat.service.js';
 import type { ReportType } from './ai.types.js';
 import { generateReport, listReports } from './reports.service.js';
 import type {
+  ChatBody,
   MonthlySummaryBody,
   RefreshQuery,
   ReportsQuery,
@@ -52,4 +54,14 @@ export async function budgetRecommendations(req: Request, res: Response): Promis
 export async function reportsHistory(req: Request, res: Response): Promise<void> {
   const { type, limit } = getValidatedQuery<ReportsQuery>(req);
   sendSuccess(res, 200, { reports: await listReports(getUserId(req), { type, limit }) });
+}
+
+/**
+ * POST a free-text financial question; the service grounds the answer in the user's aggregates only
+ * and persists the exchange as a QA report. Returns `{ answer, reportId, disclaimer }`; NO_DATA (422),
+ * RATE_LIMITED (429) and AI_UNAVAILABLE (503) surface through the shared error handler.
+ */
+export async function chat(req: Request, res: Response): Promise<void> {
+  const { question } = req.body as ChatBody;
+  sendSuccess(res, 200, await answerQuestion(getUserId(req), question));
 }

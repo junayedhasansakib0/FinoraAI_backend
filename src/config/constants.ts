@@ -117,6 +117,23 @@ export const AI_SPENDING_MONTHS = 6;
 /** Budget and savings recommendations average the last three months (§5). */
 export const AI_AVERAGE_MONTHS = 3;
 
+/**
+ * Financial Q&A (Phase 12, PROJECT_CONTEXT.md §5): the snapshot the chat context builds spans the
+ * current month plus the two before it, enough for a month-over-month answer while the prompt (and
+ * its injection surface) stays small (D7, R-I1).
+ */
+export const AI_QA_MONTHS = 3;
+
+/** A Q&A question is capped before it ever reaches a prompt (ARCHITECTURE.md §7, R-I3/R-V1). */
+export const AI_CHAT_QUESTION_MAX = 500;
+
+/**
+ * Cap on a validated Q&A answer (R-I4). Larger than a report caption because an answer may span a
+ * short paragraph, but still well under the output-token ceiling so a runaway reply cannot bloat a
+ * stored row or the client.
+ */
+export const AI_QA_ANSWER_MAX = 1_200;
+
 /** Never send more than the top handful of categories, mirroring the dashboard donut (R-B8). */
 export const AI_TOP_CATEGORIES = 8;
 

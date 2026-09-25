@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
 import {
+  AI_CHAT_QUESTION_MAX,
   AI_REPORTS_HISTORY_DEFAULT,
   AI_REPORTS_HISTORY_MAX,
 } from '../../config/constants.js';
 
-import { REPORT_TYPES } from './ai.types.js';
+import { HISTORY_REPORT_TYPES } from './ai.types.js';
 
 /**
  * Request schemas for `/ai` (ARCHITECTURE.md §7, R-V1). The only body is the month a monthly
@@ -32,9 +33,18 @@ export const refreshQuerySchema = z.object({
     .transform((value) => value === 'true'),
 });
 
+/**
+ * The free-text question the chat endpoint answers (Phase 12, R-V1/R-I3). Trimmed and length-capped
+ * before it ever reaches a prompt; the prompt layer then delimiter-wraps it as untrusted data. The
+ * cap is `AI_CHAT_QUESTION_MAX`; a blank or whitespace-only question fails validation (400).
+ */
+export const chatBodySchema = z.object({
+  question: z.string().trim().min(1).max(AI_CHAT_QUESTION_MAX),
+});
+
 /** `GET /ai/reports` history filter: an optional kind and a bounded page size (R-B8). */
 export const reportsQuerySchema = z.object({
-  type: z.enum(REPORT_TYPES).optional(),
+  type: z.enum(HISTORY_REPORT_TYPES).optional(),
   limit: z.coerce
     .number()
     .int()
@@ -46,3 +56,4 @@ export const reportsQuerySchema = z.object({
 export type MonthlySummaryBody = z.infer<typeof monthlySummaryBodySchema>;
 export type RefreshQuery = z.infer<typeof refreshQuerySchema>;
 export type ReportsQuery = z.infer<typeof reportsQuerySchema>;
+export type ChatBody = z.infer<typeof chatBodySchema>;

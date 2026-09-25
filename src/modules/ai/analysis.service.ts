@@ -1,5 +1,6 @@
 import {
   AI_AVERAGE_MONTHS,
+  AI_QA_MONTHS,
   AI_SPENDING_MONTHS,
   AI_TOP_CATEGORIES,
 } from '../../config/constants.js';
@@ -431,4 +432,85 @@ export async function readBudgetRecommendations(
  */
 export function contextString(context: unknown): string {
   return JSON.stringify(context);
+}
+
+/** The current month's snapshot for the Q&A context: totals, top spend, and budget usage. */
+export interface QASnapshotMonth {
+  month: number;
+  year: number;
+  income: string;
+  expense: string;
+  net: string;
+  topCategories: CategoryTotal[];
+  budgetUsage: BudgetUsage[];
+}
+
+/**
+ * Context for the financial Q&A (PROJECT_CONTEXT.md §5): a current-month snapshot plus the recent
+ * months' totals, the month-over-month deltas, and each goal's standing — aggregates only (R-I1),
+ * the same bounded readers the reports use. It is the ONLY thing the model sees besides the wrapped
+ * question, so a question can never reach a raw transaction, description, or email.
+ */
+export interface QAContext {
+  currency: string;
+  monthsAnalyzed: number;
+  currentMonth: QASnapshotMonth;
+  previousMonth: { income: string; expense: string; net: string } | null;
+  /** Expense change from the previous month to the current one; null with no prior month recorded. */
+  momExpenseChangePct: number | null;
+  /** Net change from the previous month to the current one; null with no prior month recorded. */
+  momNetChangePct: number | null;
+  recentMonths: MonthPoint[];
+  goals: GoalProgress[];
+}
+
+/** Build the Q&A context, or null when the user has no ledger in the window and no goals (422). */
+export async function readQAContext(userId: string, now = new Date()): Promise<QAContext | null> {
+  const { timeZone, currency } = await readUserContext(userId);
+  const window = monthWindow(now, timeZone, AI_QA_MONTHS);
+  const current = window[window.length - 1];
+  if (!current) return null;
+
+  const months = await monthSeries(userId, window);
+  const currentPoint = months[months.length - 1];
+  if (!currentPoint) return null;
+
+  const goals = await readGoals(userId, now);
+  const hasLedger = months.some(
+    (m) => !new Prisma.Decimal(m.income).isZero() || !new Prisma.Decimal(m.expense).isZero(),
+  );
+  if (!hasLedger && goals.length === 0) return null;
+
+  const { list: topCategories } = await topExpenseCategories(userId, current.start, current.end);
+  const budgetUsage = await readBudgetUsage(userId, current);
+
+  const priorPoint = months[months.length - 2] ?? null;
+  const previousMonth = priorPoint
+    ? { income: priorPoint.income, expense: priorPoint.expense, net: priorPoint.net }
+    : null;
+  const momExpenseChangePct = priorPoint
+    ? changePct(new Prisma.Decimal(priorPoint.expense), new Prisma.Decimal(currentPoint.expense))
+    : null;
+  const momNetChangePct = priorPoint
+    ? changePct(new Prisma.Decimal(priorPoint.net), new Prisma.Decimal(currentPoint.net))
+    : null;
+
+  return {
+    currency,
+    monthsAnalyzed: AI_QA_MONTHS,
+    currentMonth: {
+      month: currentPoint.month,
+      year: currentPoint.year,
+      income: currentPoint.income,
+      expense: currentPoint.expense,
+      net: currentPoint.net,
+      topCategories,
+      budgetUsage,
+    },
+    previousMonth,
+    momExpenseChangePct,
+    momNetChangePct,
+    recentMonths: months,
+    goals,
+  };
 }

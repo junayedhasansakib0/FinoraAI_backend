@@ -11,7 +11,7 @@ interface LimiterOptions {
   keyGenerator?: (req: Request) => string;
 }
 
-function limiter({ windowMs, limit, keyGenerator }: LimiterOptions): RateLimitRequestHandler {
+export function limiter({ windowMs, limit, keyGenerator }: LimiterOptions): RateLimitRequestHandler {
   const retryAfter = Math.ceil(windowMs / 1000);
 
   return rateLimit({

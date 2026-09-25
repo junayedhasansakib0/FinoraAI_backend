@@ -279,6 +279,30 @@ describe('POST /api/v1/transactions', () => {
     expect(store.transactions[0]?.date.toISOString()).toBe('2026-08-04T00:00:00.000Z');
   });
 
+  it('stores and returns a script-like description verbatim, never stripped or escaped', async () => {
+    const coffee = seedCategory({ userId: OWNER, name: 'Coffee', type: 'expense' });
+    const payload = '<script>alert(1)</script>';
+
+    const created = await request(app)
+      .post(BASE)
+      .set('Cookie', asOwner)
+      .send({ type: 'expense', amount: '4.50', categoryId: coffee.id, description: payload, date: '2026-08-04' });
+    const createdBody = created.body as SuccessBody<{ transaction: PublicTransaction }>;
+
+    expect(created.status).toBe(201);
+    // The API is JSON: the string round-trips byte-for-byte and is never rendered as HTML — the
+    // client escapes on display (R-I4 / §13.15). Sanitising here would corrupt a legitimate value.
+    expect(createdBody.data.transaction.description).toBe(payload);
+    expect(store.transactions[0]?.description).toBe(payload);
+
+    const fetched = await request(app)
+      .get(`${BASE}/${createdBody.data.transaction.id}`)
+      .set('Cookie', asOwner);
+    const fetchedBody = fetched.body as SuccessBody<{ transaction: PublicTransaction }>;
+
+    expect(fetchedBody.data.transaction.description).toBe(payload);
+  });
+
   it('refuses a category that tracks the other direction', async () => {
     const coffee = seedCategory({ userId: OWNER, name: 'Coffee', type: 'expense' });
 

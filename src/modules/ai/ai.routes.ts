@@ -5,12 +5,14 @@ import { validateBody, validateQuery } from '../../middleware/validate.js';
 
 import {
   budgetRecommendations,
+  chat,
   monthlySummary,
   reportsHistory,
   savingsRecommendations,
   spendingAnalysis,
 } from './ai.controller.js';
 import {
+  chatBodySchema,
   monthlySummaryBodySchema,
   refreshQuerySchema,
   reportsQuerySchema,
@@ -36,5 +38,7 @@ aiRouter.post(
 );
 aiRouter.post('/savings-recommendations', validateQuery(refreshQuerySchema), savingsRecommendations);
 aiRouter.post('/budget-recommendations', validateQuery(refreshQuerySchema), budgetRecommendations);
+
+aiRouter.post('/chat', validateBody(chatBodySchema), chat);
 
 aiRouter.get('/reports', validateQuery(reportsQuerySchema), reportsHistory);

@@ -42,6 +42,18 @@ interface UserFindArgs {
   select: Record<string, boolean>;
 }
 
+interface UserUpdateArgs {
+  where: { id: string };
+  data: {
+    name?: string;
+    currency?: string;
+    timezone?: string;
+    passwordHash?: string;
+    tokenVersion?: { increment: number };
+  };
+  select: Record<string, boolean>;
+}
+
 const state = vi.hoisted(() => ({
   users: new Map<string, StoredUser>(),
   authLimiterHits: 0,
@@ -114,6 +126,27 @@ vi.mock('../src/lib/prisma.js', async () => {
               (where.email !== undefined && row.email === where.email),
           );
           return Promise.resolve(match ? project(match, select) : null);
+        },
+
+        update({ where, data, select }: UserUpdateArgs): Promise<Record<string, unknown>> {
+          const row = state.users.get(where.id);
+          if (!row) {
+            return Promise.reject(
+              new Prisma.PrismaClientKnownRequestError('Record not found', {
+                code: 'P2025',
+                clientVersion: 'test',
+              }),
+            );
+          }
+
+          if (data.name !== undefined) row.name = data.name;
+          if (data.currency !== undefined) row.currency = data.currency;
+          if (data.timezone !== undefined) row.timezone = data.timezone;
+          if (data.passwordHash !== undefined) row.passwordHash = data.passwordHash;
+          if (data.tokenVersion !== undefined) row.tokenVersion += data.tokenVersion.increment;
+          row.updatedAt = new Date();
+
+          return Promise.resolve(project(row, select));
         },
       },
     },
@@ -380,6 +413,154 @@ describe('POST /api/v1/auth/logout', () => {
 
   it('requires an active session', async () => {
     const response = await request(app).post(`${BASE}/logout`);
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe('UNAUTHENTICATED');
+  });
+});
+
+describe('PATCH /api/v1/auth/profile', () => {
+  it('updates the editable fields and returns the public user only', async () => {
+    const { agent } = await registerAccount('profile@example.com');
+
+    const response = await agent
+      .patch(`${BASE}/profile`)
+      .send({ name: 'Ada B. Lovelace', currency: 'eur', timezone: 'Europe/London' });
+    const body = response.body as SuccessBody<SessionBody>;
+
+    expect(response.status).toBe(200);
+    // Currency is upper-cased to match how it is stored.
+    expect(body.data.user.name).toBe('Ada B. Lovelace');
+    expect(body.data.user.currency).toBe('EUR');
+    expect(body.data.user.timezone).toBe('Europe/London');
+    expect(Object.keys(body.data.user).sort()).toEqual([
+      'createdAt',
+      'currency',
+      'email',
+      'id',
+      'name',
+      'timezone',
+    ]);
+
+    const stored = state.users.get(body.data.user.id);
+    expect(stored?.currency).toBe('EUR');
+  });
+
+  it('accepts a single field and leaves the rest untouched', async () => {
+    const { agent } = await registerAccount('single@example.com');
+
+    const response = await agent.patch(`${BASE}/profile`).send({ timezone: 'Asia/Tokyo' });
+    const body = response.body as SuccessBody<SessionBody>;
+
+    expect(response.status).toBe(200);
+    expect(body.data.user.timezone).toBe('Asia/Tokyo');
+    expect(body.data.user.name).toBe('Ada Lovelace');
+  });
+
+  it('rejects an empty body', async () => {
+    const { agent } = await registerAccount('empty@example.com');
+
+    const response = await agent.patch(`${BASE}/profile`).send({});
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a malformed currency code', async () => {
+    const { agent } = await registerAccount('badcur@example.com');
+
+    const response = await agent.patch(`${BASE}/profile`).send({ currency: 'US' });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects an unknown timezone', async () => {
+    const { agent } = await registerAccount('badtz@example.com');
+
+    const response = await agent.patch(`${BASE}/profile`).send({ timezone: 'Mars/Olympus' });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('requires an active session', async () => {
+    const response = await request(app).patch(`${BASE}/profile`).send({ name: 'Nobody' });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe('UNAUTHENTICATED');
+  });
+});
+
+describe('POST /api/v1/auth/change-password', () => {
+  const NEW_PASSWORD = 'a-brand-new-passphrase';
+
+  it('changes the password, bumps tokenVersion, and keeps the caller signed in', async () => {
+    const { agent, response: registered } = await registerAccount('pw@example.com');
+    const userId = (registered.body as SuccessBody<SessionBody>).data.user.id;
+    expect(state.users.get(userId)?.tokenVersion).toBe(0);
+
+    const response = await agent
+      .post(`${BASE}/change-password`)
+      .send({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD });
+
+    expect(response.status).toBe(200);
+    // Fresh cookies are re-issued so this session survives the version bump.
+    expect(cookie(response, AUTH_COOKIES.access.name)).toBeDefined();
+    expect(cookie(response, AUTH_COOKIES.refresh.name)).toBeDefined();
+    expect(state.users.get(userId)?.tokenVersion).toBe(1);
+
+    // The re-issued cookies still authenticate.
+    expect((await agent.get(`${BASE}/me`)).status).toBe(200);
+
+    // The old password no longer logs in; the new one does.
+    const oldLogin = await request(app)
+      .post(`${BASE}/login`)
+      .send({ email: 'pw@example.com', password: PASSWORD });
+    expect(oldLogin.status).toBe(401);
+
+    const newLogin = await request(app)
+      .post(`${BASE}/login`)
+      .send({ email: 'pw@example.com', password: NEW_PASSWORD });
+    expect(newLogin.status).toBe(200);
+  });
+
+  it('rejects a wrong current password without changing anything', async () => {
+    const { agent, response: registered } = await registerAccount('wrongpw@example.com');
+    const userId = (registered.body as SuccessBody<SessionBody>).data.user.id;
+
+    const response = await agent
+      .post(`${BASE}/change-password`)
+      .send({ currentPassword: 'not-my-password', newPassword: NEW_PASSWORD });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe('INVALID_CREDENTIALS');
+    expect(setCookies(response)).toHaveLength(0);
+    expect(state.users.get(userId)?.tokenVersion).toBe(0);
+  });
+
+  it('rejects a too-short new password', async () => {
+    const { agent } = await registerAccount('shortpw@example.com');
+
+    const response = await agent
+      .post(`${BASE}/change-password`)
+      .send({ currentPassword: PASSWORD, newPassword: 'short' });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('requires an active session', async () => {
+    const response = await request(app)
+      .post(`${BASE}/change-password`)
+      .send({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD });
     const body = response.body as ErrorBody;
 
     expect(response.status).toBe(401);

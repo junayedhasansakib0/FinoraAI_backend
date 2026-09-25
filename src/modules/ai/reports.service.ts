@@ -15,7 +15,12 @@ import {
   readSpendingAnalysis,
   contextString,
 } from './analysis.service.js';
-import type { PublicAIReport, ReportType } from './ai.types.js';
+import {
+  QA_REPORT_TYPE,
+  type PublicAIReport,
+  type ReportHistoryType,
+  type ReportType,
+} from './ai.types.js';
 import { AI_DISCLAIMER, systemPromptFor, wrapContext } from './prompts.js';
 import { outputSchemaFor } from './reports.schema.js';
 
@@ -121,11 +126,15 @@ function toPublicReport(
   row: { id: string; type: string; content: unknown; createdAt: Date },
   cached: boolean,
 ): PublicAIReport {
-  const stored = row.content as StoredContent;
+  // QA rows persist the exchange directly as { question, answer }; the four generatable reports
+  // wrap their validated output as { data, scope } for scope-aware reuse. Branch on the kind so
+  // the shared history endpoint renders both (ARCHITECTURE.md §7).
+  const content =
+    row.type === QA_REPORT_TYPE ? row.content : (row.content as StoredContent).data;
   return {
     id: row.id,
-    type: row.type as ReportType,
-    content: stored.data,
+    type: row.type as ReportHistoryType,
+    content,
     createdAt: row.createdAt.toISOString(),
     disclaimer: AI_DISCLAIMER,
     cached,
@@ -179,7 +188,7 @@ export async function generateReport(
 /** The user's recent reports, newest first, optionally filtered to one kind (ARCHITECTURE.md §7). */
 export async function listReports(
   userId: string,
-  filter: { type?: ReportType; limit?: number } = {},
+  filter: { type?: ReportHistoryType; limit?: number } = {},
 ): Promise<PublicAIReport[]> {
   const rows = await prisma.aIReport.findMany({
     where: { userId, ...(filter.type ? { type: filter.type } : {}) },

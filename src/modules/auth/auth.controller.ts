@@ -6,13 +6,20 @@ import { AppError } from '../../lib/app-error.js';
 import { clearAuthCookies, setAuthCookies } from '../../lib/auth-cookies.js';
 import { getUserId } from '../../middleware/auth.js';
 import {
+  changePassword as changePasswordService,
   getUserById,
   loginUser,
   refreshSession,
   registerUser,
+  updateProfile as updateProfileService,
   type AuthResult,
 } from './auth.service.js';
-import type { LoginInput, RegisterInput } from './auth.validation.js';
+import type {
+  ChangePasswordInput,
+  LoginInput,
+  RegisterInput,
+  UpdateProfileInput,
+} from './auth.validation.js';
 
 /**
  * Transport layer for `/auth`. Rejected promises reach the central error handler through
@@ -50,4 +57,14 @@ export function logout(_req: Request, res: Response): void {
 
 export async function me(req: Request, res: Response): Promise<void> {
   sendSuccess(res, 200, { user: await getUserById(getUserId(req)) });
+}
+
+export async function updateProfile(req: Request, res: Response): Promise<void> {
+  const user = await updateProfileService(getUserId(req), req.body as UpdateProfileInput);
+  sendSuccess(res, 200, { user });
+}
+
+/** Re-issues cookies so the caller stays signed in even though the version bump killed the old ones. */
+export async function changePassword(req: Request, res: Response): Promise<void> {
+  respondWithSession(res, 200, await changePasswordService(getUserId(req), req.body as ChangePasswordInput));
 }

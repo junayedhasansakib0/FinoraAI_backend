@@ -8,7 +8,12 @@ import type { TokenPair } from '../../lib/auth-cookies.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../lib/jwt.js';
 import { isUniqueViolation } from '../../lib/prisma-errors.js';
 import { prisma } from '../../lib/prisma.js';
-import type { LoginInput, RegisterInput } from './auth.validation.js';
+import type {
+  ChangePasswordInput,
+  LoginInput,
+  RegisterInput,
+  UpdateProfileInput,
+} from './auth.validation.js';
 
 /** All business rules for `/auth` (ARCHITECTURE.md §6). Controllers stay transport-only. */
 
@@ -136,4 +141,52 @@ export async function getUserById(userId: string): Promise<PublicUser> {
   }
 
   return user;
+}
+
+/**
+ * Updates the editable profile fields (§7). Only the keys present in `input` are written; Prisma
+ * ignores `undefined`, so an omitted field is left untouched. No field here is unique, so there is
+ * no conflict to map.
+ */
+export async function updateProfile(userId: string, input: UpdateProfileInput): Promise<PublicUser> {
+  return prisma.user.update({
+    where: { id: userId },
+    data: input,
+    select: PUBLIC_USER_SELECT,
+  });
+}
+
+/**
+ * Changes the password after re-verifying the current one, then bumps `tokenVersion` so every
+ * refresh token already issued (on other devices) stops verifying (R-A2). Fresh cookies are
+ * re-issued for the caller so the session they are changing the password from stays alive.
+ */
+export async function changePassword(
+  userId: string,
+  { currentPassword, newPassword }: ChangePasswordInput,
+): Promise<AuthResult> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, passwordHash: true },
+  });
+
+  if (!user) {
+    throw new AppError('UNAUTHENTICATED', 'Your session is no longer valid.');
+  }
+
+  if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
+    throw new AppError('INVALID_CREDENTIALS', 'Your current password is incorrect.');
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash, tokenVersion: { increment: 1 } },
+    select: { ...PUBLIC_USER_SELECT, tokenVersion: true },
+  });
+
+  const { tokenVersion, ...publicUser } = updated;
+
+  return { user: publicUser, tokens: issueTokens(updated.id, tokenVersion) };
 }
