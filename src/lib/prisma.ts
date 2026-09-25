@@ -13,12 +13,42 @@ import { logger } from './logger.js';
 
 const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
 
+/** Queries at or above this take are logged for index tuning (R-L2). */
+const SLOW_QUERY_MS = 500;
+/** The statement is truncated in the log; it holds only table/column names, never values. */
+const STATEMENT_LOG_MAX = 200;
+
 function createPrismaClient(): PrismaClient {
-  return new PrismaClient({
+  const client = new PrismaClient({
     adapter,
-    // Queries are never logged: their parameters contain user financial data (R-A4).
-    log: env.isProduction ? ['error'] : ['warn', 'error'],
+    // The query text is emitted as an event, never printed, so a slow query can be logged (R-L2)
+    // without ever logging its bound parameters — those hold user financial data (R-A4).
+    log: env.isProduction
+      ? [
+          { emit: 'event', level: 'query' },
+          { emit: 'stdout', level: 'error' },
+        ]
+      : [
+          { emit: 'event', level: 'query' },
+          { emit: 'stdout', level: 'warn' },
+          { emit: 'stdout', level: 'error' },
+        ],
   });
+
+  // Only the parameterised statement (`$1`, `$2`, …) and its duration are recorded — never
+  // `event.params`, which carry the actual financial values (R-A4). Surfaces a hot query that has
+  // stopped using its R-D8 index. Query events require a live connection, so this is silent in
+  // tests (Prisma is mocked) and exercised at runtime.
+  client.$on('query', (event) => {
+    if (event.duration < SLOW_QUERY_MS) return;
+
+    logger.warn('slow_query', {
+      durationMs: event.duration,
+      statement: event.query.slice(0, STATEMENT_LOG_MAX),
+    });
+  });
+
+  return client;
 }
 
 const globalForPrisma = globalThis as typeof globalThis & {

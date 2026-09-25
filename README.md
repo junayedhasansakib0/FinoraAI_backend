@@ -71,6 +71,23 @@ curl http://localhost:5000/health
 > must use the Supavisor pooler — transaction pooler (`:6543`) for `DATABASE_URL`, session pooler
 > (`:5432`) for `DIRECT_URL`, which migrations need.
 
+### Production
+
+Compile once, then run the compiled server with `NODE_ENV=production`:
+
+```bash
+npm ci                    # reproducible install from the lockfile
+cp .env.example .env      # or set these as host environment variables
+npm run db:deploy         # apply migrations to the production database
+npm run build             # prisma generate + tsc → dist/
+NODE_ENV=production npm start
+```
+
+With `NODE_ENV=production` the server sets **Secure** auth cookies, restricts CORS to the
+`CLIENT_ORIGIN` allowlist, and trusts the first proxy hop (`trust proxy`, 1) so it reads the real
+client IP and protocol from `X-Forwarded-*` behind the host's TLS terminator (Render). Set
+`CLIENT_ORIGIN` to the deployed SPA origin(s), comma-separated.
+
 ## 📜 Scripts
 
 | Script | Purpose |
@@ -99,6 +116,9 @@ Required today: `NODE_ENV`, `PORT`, `CLIENT_ORIGIN`, `DATABASE_URL`, `JWT_ACCESS
 `JWT_REFRESH_SECRET` (32+ characters each, and different from one another). `DIRECT_URL` is
 optional and used for migrations. The remaining variables live in `.env.example` and become
 required in the phase that introduces them (AI keys in Phase 10).
+
+Set `NODE_ENV=production` when deploying: it turns on Secure cookies and `trust proxy` and keeps
+CORS pinned to the `CLIENT_ORIGIN` allowlist (see [Production](#production) above).
 
 > Secrets live only in the local `.env` file or the host's environment settings — **never** in
 > code, Git, logs, or AI prompts.
@@ -132,7 +152,7 @@ Browser ──HTTP──▶ Finora API ──┬──▶ Prisma ──▶ Postg
 
 ## ✅ Status & roadmap
 
-Built in sequential phases (see `IMPLEMENTATION.md`). API surface shipped so far:
+Built in sequential phases (see `IMPLEMENTATION.md`). The full API surface is shipped:
 
 | Area | Endpoints | Status |
 | --- | --- | --- |
@@ -141,9 +161,13 @@ Built in sequential phases (see `IMPLEMENTATION.md`). API surface shipped so far
 | Transactions | `/transactions` CRUD, filter, paginate, totals | ✅ |
 | Dashboard | `/dashboard/summary`, `/dashboard/analytics` | ✅ |
 | Budgets | `/budgets` CRUD with server-computed progress & status | ✅ |
-| Savings goals | `/goals` | ⏳ next |
-| Currency & crypto | `/currency`, `/crypto` | 🔜 |
-| AI insights & Q&A | `/ai/*` | 🔜 |
+| Savings goals | `/savings-goals` CRUD with server-computed progress | ✅ |
+| Currency & crypto | `/currency`, `/crypto` (cached, reference data — never real-time) | ✅ |
+| AI insights & Q&A | `/ai/*` (reports + financial Q&A, aggregates only) | ✅ |
+
+Continuous integration runs on every push and pull request
+(`.github/workflows/ci.yml`): **lint → typecheck → test**, deterministic and offline (no
+database, no external calls, no secrets — Prisma and every provider are mocked, R-T4).
 
 ## 📚 Documentation
 

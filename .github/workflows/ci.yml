@@ -1,0 +1,45 @@
+# Continuous integration for the Finora API (finora-server).
+# One workflow per repository (IMPLEMENTATION.md Phase 17); free for public repositories.
+# Never touches an external service: the test suite mocks AI/Frankfurter/CoinGecko and Prisma
+# (R-T4), so CI is deterministic and needs no database and no secrets.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: lint · typecheck · test
+    runs-on: ubuntu-latest
+
+    env:
+      # The Prisma client generator (v7 config) reads a datasource URL. This is a syntactically
+      # valid placeholder only — CI never connects to it, and it is not a secret.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/finora_ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The generated Prisma client is git-ignored, so it must be regenerated before typecheck/test
+      # can resolve `../generated/prisma/client`. This runs offline and makes no connection.
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test

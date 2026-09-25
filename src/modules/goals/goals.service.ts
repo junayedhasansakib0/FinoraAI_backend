@@ -16,6 +16,12 @@ import type {
 const NO_MONEY = new Prisma.Decimal(0);
 const PROGRESS_CEILING = 100;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+/**
+ * A defensive upper bound so the goals list can never grow into an unbounded query (R-B8, R-L5).
+ * Savings goals are a small per-user set in practice; this ceiling is far above any real account
+ * and exists only to keep the read bounded, never to truncate a genuine list.
+ */
+const MAX_SAVINGS_GOALS = 500;
 
 export type DeadlineStatus = 'on-track' | 'past-deadline';
 
@@ -86,6 +92,7 @@ export async function listSavingsGoals(
   const goals = await prisma.savingsGoal.findMany({
     where: { userId },
     orderBy: [{ deadline: 'asc' }, { id: 'asc' }],
+    take: MAX_SAVINGS_GOALS,
   });
 
   return goals.map((goal) => toPublicSavingsGoal(goal, now));

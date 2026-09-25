@@ -29,6 +29,14 @@ export function createApp(): Express {
 
   app.disable('x-powered-by'); // R-A8
 
+  // In production the API runs behind the host's reverse proxy (e.g. Render). Trust the first hop
+  // so Express reads the client's real IP and protocol from the `X-Forwarded-*` headers: the per-IP
+  // rate limiter then buckets by the real client rather than the proxy, and `Secure` cookies are set
+  // over the proxy's TLS. Never trusted in development or test, where there is no proxy (R-A5).
+  if (env.isProduction) {
+    app.set('trust proxy', 1);
+  }
+
   app.use(helmet());
   // Exact origin allowlist with credentials — never a wildcard (R-A5).
   app.use(cors({ origin: env.CLIENT_ORIGIN, credentials: true }));
