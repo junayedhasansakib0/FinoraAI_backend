@@ -925,9 +925,11 @@ const aiReport = {
 
 /**
  * Both `$transaction` forms the services use: the batch array, and the interactive callback that
- * receives a client. Isolation is not modelled — a single-threaded store cannot interleave.
+ * receives a client. Isolation is not modelled — a single-threaded store cannot interleave. The
+ * optional second argument mirrors Prisma's real signature (batch options such as `maxWait` /
+ * `timeout`); the double does not time anything, so it is accepted and ignored.
  */
-function runTransaction(argument: unknown): Promise<unknown> {
+function runTransaction(argument: unknown, _options?: unknown): Promise<unknown> {
   if (Array.isArray(argument)) {
     return Promise.all(argument as unknown[]);
   }

@@ -1,4 +1,4 @@
-import { MONEY_DECIMAL_PLACES } from '../../config/constants.js';
+import { DB_TRANSACTION_MAX_WAIT_MS, DB_TRANSACTION_TIMEOUT_MS, MONEY_DECIMAL_PLACES } from '../../config/constants.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../lib/app-error.js';
 import { isRecordNotFound } from '../../lib/prisma-errors.js';
@@ -167,17 +167,22 @@ export async function listTransactions(
   const { page, limit } = query;
   const where = buildWhere(userId, query);
 
-  const [rows, total, groups] = await prisma.$transaction([
-    prisma.transaction.findMany({
-      where,
-      select: TRANSACTION_SELECT,
-      orderBy: buildOrderBy(query),
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
-    prisma.transaction.count({ where }),
-    prisma.transaction.groupBy({ by: ['type'], where, _sum: { amount: true } }),
-  ]);
+  const [rows, total, groups] = await prisma.$transaction(
+    [
+      prisma.transaction.findMany({
+        where,
+        select: TRANSACTION_SELECT,
+        orderBy: buildOrderBy(query),
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.transaction.count({ where }),
+      prisma.transaction.groupBy({ by: ['type'], where, _sum: { amount: true } }),
+    ],
+    // Defaults (maxWait 2s) are too tight for a cold/pooled free-tier connection, where starting
+    // the transaction alone can exceed 2s and 500 the read (see the constants for the rationale).
+    { maxWait: DB_TRANSACTION_MAX_WAIT_MS, timeout: DB_TRANSACTION_TIMEOUT_MS },
+  );
 
   return {
     items: rows.map(toPublicTransaction),

@@ -21,12 +21,13 @@
 
 import { z } from 'zod';
 
-import { generateStructured, resolveProviderName } from '../src/ai/ai.service.js';
+import { generateStructured, getProvider, resolveProviderName } from '../src/ai/ai.service.js';
 import {
   AI_PROVIDER_ENDPOINTS,
   isLiveProvider,
   isProviderKeyConfigured,
 } from '../src/ai/provider-config.js';
+import { AIProviderError } from '../src/ai/types.js';
 import { fetchTopMarkets } from '../src/integrations/coingecko.client.js';
 import { fetchCurrencies, fetchRates } from '../src/integrations/frankfurter.client.js';
 
@@ -77,9 +78,40 @@ async function checkCrypto(): Promise<CheckResult> {
 }
 
 /**
+ * Turns a provider failure into the one line an operator needs to act on — the safe HTTP status
+ * mapped to a category and a next step. It reads ONLY the status the adapter attached; the response
+ * body is never inspected because it may echo the key or prompt (R-A4).
+ */
+function classifyProviderFailure(error: unknown): string {
+  if (!(error instanceof AIProviderError)) {
+    return `APPLICATION_ERROR — ${messageOf(error)}`;
+  }
+  const status = error.status;
+  if (status === undefined) {
+    // No HTTP status: a timeout, a network error, a missing key, or an unparseable envelope.
+    return `NETWORK_ERROR / TIMEOUT / INVALID_RESPONSE — ${error.message}`;
+  }
+  switch (status) {
+    case 401:
+      return 'PROVIDER_401 (INVALID_KEY) — the key was rejected; regenerate it and update the env var';
+    case 403:
+      return 'PROVIDER_403 (PERMISSION_DENIED) — the key is well-formed but its provider project is denied API access; supply a key whose project can call the API';
+    case 404:
+      return 'PROVIDER_404 (INVALID_MODEL/ENDPOINT) — the configured model or endpoint was not found for this key';
+    case 429:
+      return 'PROVIDER_429 (RATE_LIMITED) — the free-tier rate/quota was exceeded; retry later';
+    default:
+      return status >= 500
+        ? `PROVIDER_5XX (${String(status)}) — upstream provider error; retry later`
+        : `PROVIDER_${String(status)}`;
+  }
+}
+
+/**
  * The configured AI provider, exercised through the real `generateStructured` pipeline
  * (JSON → Zod → repair → typed failure). Fails clearly when the provider is `mock` or its key is
- * unset; on an upstream rejection the AI Service's own log line carries the safe reason.
+ * unset; on an upstream rejection it probes the provider directly to recover the safe status and
+ * name the failure category (the pipeline itself only ever surfaces a generic `AI_UNAVAILABLE`).
  */
 async function checkAi(): Promise<CheckResult> {
   const name = resolveProviderName();
@@ -95,22 +127,38 @@ async function checkAi(): Promise<CheckResult> {
   if (!isProviderKeyConfigured(name)) {
     return {
       status: 'fail',
-      detail: `${cfg.keyEnvVar} is not set — cannot make a live ${name} call`,
+      detail: `MISSING_KEY — ${cfg.keyEnvVar} is not set; cannot make a live ${name} call`,
     };
   }
 
-  const result = await generateStructured('smoke-test', {
-    system: 'You are a JSON API. Reply with ONLY a JSON object and nothing else.',
-    user: 'Return exactly {"status":"ok"}.',
-    schema: z.object({ status: z.string() }),
-    maxTokens: 64,
-  });
+  try {
+    const result = await generateStructured('smoke-test', {
+      system: 'You are a JSON API. Reply with ONLY a JSON object and nothing else.',
+      user: 'Return exactly {"status":"ok"}.',
+      schema: z.object({ status: z.string() }),
+      maxTokens: 64,
+    });
 
-  const tokens = result.usage.outputTokens ?? 0;
-  return {
-    status: 'pass',
-    detail: `${name} (${cfg.model} @ ${cfg.endpoint}) replied with valid JSON {status:"${result.data.status}"}; ~${String(tokens)} output tokens`,
-  };
+    const tokens = result.usage.outputTokens ?? 0;
+    return {
+      status: 'pass',
+      detail: `${name} (${cfg.model} @ ${cfg.endpoint}) replied with valid JSON {status:"${result.data.status}"}; ~${String(tokens)} output tokens`,
+    };
+  } catch {
+    // The pipeline maps every provider failure to a generic AI_UNAVAILABLE (R-I4), which hides the
+    // cause. Probe the provider once more, directly, to recover the typed status and classify it.
+    let category: string;
+    try {
+      await getProvider().generate({ system: 'ping', user: 'ping', jsonMode: true, maxTokens: 16 });
+      category = 'APPLICATION_ERROR — provider reachable, but the structured pipeline rejected the output';
+    } catch (probeError) {
+      category = classifyProviderFailure(probeError);
+    }
+    return {
+      status: 'fail',
+      detail: `${name} (${cfg.model} @ ${cfg.endpoint}) → ${category}`,
+    };
+  }
 }
 
 const RUNNERS: Record<CheckName, () => Promise<CheckResult>> = {

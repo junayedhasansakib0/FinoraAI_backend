@@ -71,7 +71,7 @@ export const groqProvider: AIProvider = {
     }
 
     if (!response.ok) {
-      throw new AIProviderError('groq', `groq responded ${String(response.status)}`);
+      throw new AIProviderError('groq', `groq responded ${String(response.status)}`, response.status);
     }
 
     const parsed = responseSchema.safeParse(await response.json());

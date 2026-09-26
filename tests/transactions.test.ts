@@ -10,7 +10,7 @@ import type {
   PublicTransaction,
   TransactionPage,
 } from '../src/modules/transactions/transactions.service.js';
-import { resetStore, seedCategory, seedTransaction, store } from './helpers/db-double.js';
+import { resetStore, seedCategory, seedTransaction, store, prismaDouble } from './helpers/db-double.js';
 
 /**
  * Transactions suite (ARCHITECTURE.md §7, R-T3). Same in-memory double and minted session as the
@@ -129,6 +129,29 @@ describe('GET /api/v1/transactions', () => {
     const response = await request(app).get(BASE);
 
     expect(response.status).toBe(401);
+  });
+
+  /**
+   * Regression: the list batch must carry explicit `maxWait`/`timeout` options. Prisma's defaults
+   * (maxWait 2s) are too tight for a cold or pooled free-tier connection, where the batch fails to
+   * even start the transaction and the read 500s. Dropping the options would silently bring the bug
+   * back, so the call shape is asserted here rather than the (untimed) result alone.
+   */
+  it('runs the list batch with widened transaction start/run timeouts', async () => {
+    seedLedger();
+    const txSpy = vi.spyOn(prismaDouble, '$transaction');
+
+    const { response } = await listAs(OWNER);
+
+    expect(response.status).toBe(200);
+    const batchCall = txSpy.mock.calls.find(([first]) => Array.isArray(first));
+    expect(batchCall).toBeDefined();
+    expect(batchCall?.[1]).toMatchObject({
+      maxWait: expect.any(Number) as number,
+      timeout: expect.any(Number) as number,
+    });
+    expect((batchCall?.[1] as { maxWait: number }).maxWait).toBeGreaterThan(2000);
+    txSpy.mockRestore();
   });
 
   it('returns the paginated envelope with totals for the whole filter', async () => {

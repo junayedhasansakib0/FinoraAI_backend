@@ -42,11 +42,18 @@ export type AIProviderName = 'gemini' | 'groq' | 'openrouter' | 'mock';
  * A typed provider failure: an unconfigured key, a non-2xx upstream, a timeout, or an
  * unparseable envelope. The AI Service maps any of these to `AI_UNAVAILABLE` (503) without a
  * repair retry — repair is only for output that arrived but failed validation.
+ *
+ * `status` carries the upstream HTTP status when the failure was a non-2xx response, so a
+ * developer-facing diagnostic (the live smoke test) can distinguish an invalid key (401) from a
+ * denied project (403) from a retired model (404) without ever inspecting the response body — the
+ * body may echo the key or prompt and is therefore never read or logged (R-A4). It is `undefined`
+ * for a timeout, network error, missing key, or bad envelope, none of which have a status.
  */
 export class AIProviderError extends Error {
   constructor(
     readonly provider: AIProviderName,
     message: string,
+    readonly status?: number,
   ) {
     super(message);
     this.name = 'AIProviderError';

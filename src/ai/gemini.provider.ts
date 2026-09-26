@@ -15,9 +15,10 @@ import {
  * Gemini (Google AI Studio) — the primary provider (PROJECT_CONTEXT.md §6). Called over plain
  * REST with `fetch`, so no SDK dependency is added (R-P1). The key is read only from server env,
  * sent as a header, and NEVER logged or returned to the client (R-A4). Free tier verified R-E5
- * (see phase notes): gemini-2.5-flash, ~10 RPM / 250 RPD — the per-user quota sits well inside it,
- * and free-tier inputs may be used to improve the product, which is why only aggregates are ever
- * sent (R-I1). Output is informational, never presented as real-time financial advice (R-I5).
+ * (see phase notes): the `gemini-flash-latest` alias (see `provider-config.ts`) tracks the current
+ * free Flash model, ~10 RPM / 250 RPD — the per-user quota sits well inside it, and free-tier
+ * inputs may be used to improve the product, which is why only aggregates are ever sent (R-I1).
+ * Output is informational, never presented as real-time financial advice (R-I5).
  */
 
 /** Endpoint and model come from the single provider-config table (`provider-config.ts`). */
@@ -84,8 +85,9 @@ export const geminiProvider: AIProvider = {
     }
 
     if (!response.ok) {
-      // Status only; the body may echo the key or prompt, so it is never logged (R-A4).
-      throw new AIProviderError('gemini', `gemini responded ${String(response.status)}`);
+      // Status only; the body may echo the key or prompt, so it is never logged (R-A4). The status
+      // is carried on the error so the live smoke test can classify 401/403/404/429 (R-E5).
+      throw new AIProviderError('gemini', `gemini responded ${String(response.status)}`, response.status);
     }
 
     const parsed = responseSchema.safeParse(await response.json());

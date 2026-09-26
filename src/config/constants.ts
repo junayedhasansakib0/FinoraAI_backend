@@ -44,6 +44,17 @@ export const MONEY_DECIMAL_PLACES = 2;
 export const NAME_MAX_LENGTH = 60;
 export const DESCRIPTION_MAX_LENGTH = 280;
 
+/**
+ * Bounds for a batched `$transaction` (Prisma interactive transaction). The library defaults are
+ * `maxWait` 2s / `timeout` 5s, which are too tight for a cold or pooled free-tier Postgres
+ * connection (Supabase): after an idle period a single round trip can itself approach a second, so
+ * the batch fails to even START the transaction ("Unable to start a transaction in the given time")
+ * and the read 500s. These give a batch room to begin and finish on a slow connection without ever
+ * masking a database that is genuinely down — a real outage still surfaces as an error (R-E6, §8).
+ */
+export const DB_TRANSACTION_MAX_WAIT_MS = 15_000;
+export const DB_TRANSACTION_TIMEOUT_MS = 20_000;
+
 /** Pagination defaults and the hard page-size ceiling (R-B8). */
 export const PAGE_DEFAULT = 1;
 export const PAGE_SIZE_DEFAULT = 20;

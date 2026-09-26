@@ -295,9 +295,10 @@ async function readBreakdown(userId: string, range: MonthRange): Promise<Categor
 }
 
 /**
- * The series and the breakdown are read separately: the months belong in one batch, because a
- * running balance assembled from different moments would be visibly wrong, while the breakdown
- * is a single query and therefore consistent on its own.
+ * The series and the breakdown are read in two separate calls, not one batch: the months belong
+ * together in a single `$transaction`, because a running balance assembled from different moments
+ * would be visibly wrong, while the breakdown is a single query and consistent on its own. Kept
+ * apart this way they have no data dependency on each other, so they are issued concurrently.
  */
 export async function readAnalytics(
   userId: string,
@@ -310,20 +311,27 @@ export async function readAnalytics(
   // The schema floors `months` at 1, where the window is the current month alone.
   const [earliest = current] = window;
 
-  const groups = await prisma.$transaction([
-    // Everything before the window, so the balance line starts where the ledger actually stands.
-    prisma.transaction.groupBy({
-      by: ['type'],
-      where: { userId, date: { lt: earliest.start } },
-      _sum: { amount: true },
-    }),
-    ...window.map((range) =>
+  // The series batch and the breakdown read from different rows and never share a figure, so they
+  // run at the same time rather than one after the other — one fewer serial round trip to the
+  // high-latency free-tier DB, with no effect on either result. The months still travel together
+  // inside `$transaction` so the running balance stays internally consistent (R-D5).
+  const [groups, breakdown] = await Promise.all([
+    prisma.$transaction([
+      // Everything before the window, so the balance line starts where the ledger actually stands.
       prisma.transaction.groupBy({
         by: ['type'],
-        where: { userId, date: { gte: range.start, lt: range.end } },
+        where: { userId, date: { lt: earliest.start } },
         _sum: { amount: true },
       }),
-    ),
+      ...window.map((range) =>
+        prisma.transaction.groupBy({
+          by: ['type'],
+          where: { userId, date: { gte: range.start, lt: range.end } },
+          _sum: { amount: true },
+        }),
+      ),
+    ]),
+    readBreakdown(userId, current),
   ]);
 
   const [openingGroups = [], ...monthlyGroups] = groups;
@@ -350,6 +358,6 @@ export async function readAnalytics(
     months,
     timezone: current.timeZone,
     series,
-    breakdown: await readBreakdown(userId, current),
+    breakdown,
   };
 }

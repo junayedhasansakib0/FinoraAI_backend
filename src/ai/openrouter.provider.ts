@@ -74,7 +74,11 @@ export const openRouterProvider: AIProvider = {
     }
 
     if (!response.ok) {
-      throw new AIProviderError('openrouter', `openrouter responded ${String(response.status)}`);
+      throw new AIProviderError(
+        'openrouter',
+        `openrouter responded ${String(response.status)}`,
+        response.status,
+      );
     }
 
     const parsed = responseSchema.safeParse(await response.json());

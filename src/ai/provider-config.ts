@@ -32,7 +32,12 @@ export interface AIProviderEndpoint {
 export const AI_PROVIDER_ENDPOINTS: Record<LiveProviderName, AIProviderEndpoint> = {
   gemini: {
     endpoint: 'https://generativelanguage.googleapis.com/v1beta',
-    model: 'gemini-2.5-flash',
+    // `gemini-3.5-flash-lite` is a current free-tier Flash-Lite model (verified live 2026, R-E5):
+    // ~1s latency and clean JSON-mode output, well inside the 20s provider timeout. The prior
+    // `gemini-flash-latest` alias was returning upstream 503 "high demand"; a named Flash-Lite model
+    // avoids that overloaded shared alias. If Google retires a point version it answers 404 — swap to
+    // another `*-flash-lite` from ListModels (e.g. `gemini-3.1-flash-lite`), the model id lives here.
+    model: 'gemini-3.5-flash-lite',
     keyEnvVar: 'GEMINI_API_KEY',
   },
   groq: {
@@ -42,7 +47,11 @@ export const AI_PROVIDER_ENDPOINTS: Record<LiveProviderName, AIProviderEndpoint>
   },
   openrouter: {
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
-    model: 'meta-llama/llama-3.3-70b-instruct:free',
+    // The previous `meta-llama/llama-3.3-70b-instruct:free` was retired — OpenRouter now 404s it
+    // ("This model is unavailable for free…the paid version is available now"). This `:free` slug is
+    // current in the catalogue and verified live 2026 (R-E5); free-tier availability still rotates,
+    // so a 429/404 here is an upstream change, not a Finora bug.
+    model: 'nvidia/nemotron-3.5-lightning:free',
     keyEnvVar: 'OPENROUTER_API_KEY',
   },
 };
