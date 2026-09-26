@@ -73,20 +73,62 @@ curl http://localhost:5000/health
 
 ### Production
 
-Compile once, then run the compiled server with `NODE_ENV=production`:
+With `NODE_ENV=production` the server sets **Secure** auth cookies, restricts CORS to the
+`CLIENT_ORIGIN` allowlist, and trusts the first proxy hop (`trust proxy`, 1) so it reads the real
+client IP and protocol from `X-Forwarded-*` behind the host's TLS terminator. A generic host runs:
 
 ```bash
-npm ci                    # reproducible install from the lockfile
-cp .env.example .env      # or set these as host environment variables
-npm run db:deploy         # apply migrations to the production database
+npm ci --include=dev      # reproducible install; --include=dev keeps prisma/tsc/tsx available
+                          # even when NODE_ENV=production would otherwise omit devDependencies
 npm run build             # prisma generate + tsc → dist/
+npm run db:deploy         # apply pending migrations (prisma migrate deploy — forward-only)
 NODE_ENV=production npm start
 ```
 
-With `NODE_ENV=production` the server sets **Secure** auth cookies, restricts CORS to the
-`CLIENT_ORIGIN` allowlist, and trusts the first proxy hop (`trust proxy`, 1) so it reads the real
-client IP and protocol from `X-Forwarded-*` behind the host's TLS terminator (Render). Set
-`CLIENT_ORIGIN` to the deployed SPA origin(s), comma-separated.
+### Deploy to Render
+
+The API targets a **Render free web service** (ARCHITECTURE.md §12). Connect this repository and
+use these exact settings — or connect it as a **Blueprint** and let `render.yaml` supply them.
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | *(leave blank — this repo's root is the server)* |
+| Runtime | Node |
+| Build Command | `npm ci --include=dev && npm run build && npm run db:deploy` |
+| Start Command | `npm start` |
+| Health Check Path | `/health` |
+
+**Why `--include=dev`.** Once `NODE_ENV=production` is set, `npm ci` omits devDependencies — but
+the build needs `prisma`, `typescript` and `tsx`, so the flag forces them in for the build step.
+
+**Migrations.** `db:deploy` runs `prisma migrate deploy`, which only applies pending migration
+files — it never resets, drops, or rewrites existing data. Render's free tier has no pre-deploy
+hook, so migrations run inside the Build Command; a failed migration fails the build and leaves
+the running version untouched. It connects through `DIRECT_URL` (falling back to `DATABASE_URL`).
+
+**Required environment variables** (set in the Render dashboard; never in code or Git):
+
+| Variable | Value |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `CLIENT_ORIGIN` | deployed SPA origin(s), comma-separated (e.g. `https://finora.vercel.app`) |
+| `DATABASE_URL` | Supabase **pooled** (transaction, `:6543`) connection string |
+| `DIRECT_URL` | Supabase **direct/session** (`:5432`) connection string (migrations) |
+| `JWT_ACCESS_SECRET` | random, ≥32 chars |
+| `JWT_REFRESH_SECRET` | random, ≥32 chars, **different** from the access secret |
+
+`PORT` is injected by Render — the server already listens on `process.env.PORT`, so leave it
+unset. Optional providers (`GEMINI_API_KEY`, `AI_PROVIDER`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`,
+`FRONTEND_URL`, `COINGECKO_API_KEY`) live in `.env.example`; unset means that feature is disabled
+and the app still boots. Take both connection strings from the **IPv4 Supavisor pooler** — the
+direct `db.<ref>.supabase.co` host is IPv6-only and Render's outbound is IPv4.
+
+> **⚠️ Cross-site cookies — read before going live.** Auth cookies are `SameSite=Lax` (R-A2), so a
+> browser will **not** send them when the SPA (Vercel) and API (Render) sit on different sites. The
+> recommended fix keeps requests same-site: have the SPA rewrite `/api/*` to the Render URL (a
+> client-repo change, no server change). The only alternative is moving the cookies to
+> `SameSite=None; Secure` — a change to R-A2's security posture that must be a documented decision
+> first (see IMPLEMENTATION.md Phase 18 risk). Neither is changed here.
 
 ## 📜 Scripts
 

@@ -1,0 +1,51 @@
+# Render Blueprint for the Finora AI API (ARCHITECTURE.md §12).
+#
+# This file is OPTIONAL and secret-free: it encodes the exact service settings as code so a
+# deploy is reproducible. You can either (a) connect this repo as a Render *Blueprint* and let
+# this file drive the service, or (b) create a Web Service in the dashboard by hand using the
+# same values (see server/README.md → "Deploy to Render"). Either way, NO secret value lives
+# here — secrets are marked `sync: false` (you enter them in the Render dashboard) or generated
+# by Render itself (`generateValue: true`).
+services:
+  - type: web
+    name: finora-ai-api
+    runtime: node
+    plan: free
+    # Render injects PORT and the app already listens on process.env.PORT — do not set it here.
+    # `--include=dev` is REQUIRED: with NODE_ENV=production set, npm would otherwise omit
+    # devDependencies (prisma, typescript, tsx) that the build and migrations need.
+    # `db:deploy` runs `prisma migrate deploy` — forward-only, never resets existing data.
+    buildCommand: npm ci --include=dev && npm run build && npm run db:deploy
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # ── Secrets & environment-specific values: set these in the Render dashboard ──
+      # Comma-separated allowlist of the deployed SPA origin(s), e.g. https://finora.vercel.app
+      - key: CLIENT_ORIGIN
+        sync: false
+      # Supabase pooled (transaction, :6543) connection — the running server uses this.
+      - key: DATABASE_URL
+        sync: false
+      # Supabase direct/session (:5432) connection — migrations use this. IPv4 Supavisor host.
+      - key: DIRECT_URL
+        sync: false
+      # Signing secrets (≥32 chars, must differ). Render generates strong random values once.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # Canonical app origin for the verification link; falls back to the first CLIENT_ORIGIN.
+      - key: FRONTEND_URL
+        sync: false
+      # ── Optional providers (leave unset to disable; see .env.example) ──
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
