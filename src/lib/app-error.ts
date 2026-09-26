@@ -4,6 +4,9 @@ export const ERROR_STATUS = {
   INVALID_CREDENTIALS: 401,
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
+  // Authenticated, but the account has not verified its email. AI and Analytics are gated behind
+  // verification (ARCHITECTURE.md §7); the soft login gate still lets the account in everywhere else.
+  EMAIL_VERIFICATION_REQUIRED: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
   // The request was well-formed but there is not enough of the user's own data to act on

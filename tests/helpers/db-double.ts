@@ -15,12 +15,14 @@ function nextId(prefix: string): string {
   return `${prefix}_${String(sequence)}`;
 }
 
-/** Only the profile fields a service reads: month boundaries follow the timezone (D9), and the AI
- *  context reports figures in the user's base currency. */
+/** Only the profile fields a service reads: month boundaries follow the timezone (D9), the AI
+ *  context reports figures in the user's base currency, and `emailVerified` drives the AI/Analytics
+ *  access gate (ARCHITECTURE.md §7). */
 export interface StoredUser {
   id: string;
   timezone: string;
   currency: string;
+  emailVerified: boolean;
 }
 
 export interface StoredCategory {
@@ -92,12 +94,20 @@ export function resetStore(): void {
 /** Fixed timestamp so ordering in the fixtures depends only on the fields under test. */
 const SEEDED_AT = new Date('2026-01-01T00:00:00.000Z');
 
-/** The id is given rather than generated: it has to match the id the test's token carries. */
-export function seedUser(input: { id: string; timezone?: string; currency?: string }): StoredUser {
+/** The id is given rather than generated: it has to match the id the test's token carries.
+ *  `emailVerified` defaults to true — most suites act as an established, verified account; the
+ *  gate suite seeds `emailVerified: false` to exercise the lock. */
+export function seedUser(input: {
+  id: string;
+  timezone?: string;
+  currency?: string;
+  emailVerified?: boolean;
+}): StoredUser {
   const row: StoredUser = {
     id: input.id,
     timezone: input.timezone ?? 'UTC',
     currency: input.currency ?? 'USD',
+    emailVerified: input.emailVerified ?? true,
   };
   store.users.push(row);
   return row;

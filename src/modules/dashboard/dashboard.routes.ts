@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { requireAuth } from '../../middleware/auth.js';
+import { requireAuth, requireVerifiedEmail } from '../../middleware/auth.js';
 import { validateQuery } from '../../middleware/validate.js';
 import { analytics, summary } from './dashboard.controller.js';
 import { analyticsQuerySchema } from './dashboard.validation.js';
@@ -10,5 +10,7 @@ export const dashboardRouter = Router();
 
 dashboardRouter.use(requireAuth);
 
+// `/summary` is the basic account overview and stays open to unverified accounts. `/analytics`
+// (trends + breakdown) is the gated "insights" surface, so it also requires a verified email.
 dashboardRouter.get('/summary', summary);
-dashboardRouter.get('/analytics', validateQuery(analyticsQuerySchema), analytics);
+dashboardRouter.get('/analytics', requireVerifiedEmail, validateQuery(analyticsQuerySchema), analytics);

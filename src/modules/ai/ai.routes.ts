@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { requireAuth } from '../../middleware/auth.js';
+import { requireAuth, requireVerifiedEmail } from '../../middleware/auth.js';
 import { validateBody, validateQuery } from '../../middleware/validate.js';
 
 import {
@@ -28,6 +28,9 @@ import {
 export const aiRouter = Router();
 
 aiRouter.use(requireAuth);
+// Every AI feature is gated behind a verified email (ARCHITECTURE.md §7). One guard on the router
+// covers all present and future AI endpoints, so a new route cannot forget it.
+aiRouter.use(requireVerifiedEmail);
 
 aiRouter.post('/spending-analysis', validateQuery(refreshQuerySchema), spendingAnalysis);
 aiRouter.post(

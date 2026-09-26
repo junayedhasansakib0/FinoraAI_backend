@@ -235,8 +235,26 @@ export async function refreshSession(refreshToken: string): Promise<AuthResult> 
   return { user: publicUser, tokens: issueTokens(user.id, tokenVersion) };
 }
 
-export async function getUserById(userId: string): Promise<PublicUser> {
+/**
+ * The single source of truth for the verified-email access policy (ARCHITECTURE.md §7). Reads the
+ * flag fresh from the database on each call rather than trusting the access token, so an account
+ * that verifies mid-session is unlocked at once — the still-valid token it holds says nothing about
+ * verification. A valid token whose account is gone fails closed as UNAUTHENTICATED.
+ */
+export async function isEmailVerified(userId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { emailVerified: true },
+  });
+
+  if (!user) {
+    throw new AppError('UNAUTHENTICATED', 'Your session is no longer valid.');
+  }
+
+  return user.emailVerified;
+}
+
+export async function getUserById(userId: string): Promise<PublicUser> {  const user = await prisma.user.findUnique({
     where: { id: userId },
     select: PUBLIC_USER_SELECT,
   });
