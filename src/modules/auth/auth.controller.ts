@@ -11,14 +11,18 @@ import {
   loginUser,
   refreshSession,
   registerUser,
+  resendVerification as resendVerificationService,
   updateProfile as updateProfileService,
+  verifyEmail as verifyEmailService,
   type AuthResult,
 } from './auth.service.js';
 import type {
   ChangePasswordInput,
   LoginInput,
   RegisterInput,
+  ResendVerificationInput,
   UpdateProfileInput,
+  VerifyEmailInput,
 } from './auth.validation.js';
 
 /**
@@ -38,6 +42,27 @@ export async function register(req: Request, res: Response): Promise<void> {
 
 export async function login(req: Request, res: Response): Promise<void> {
   respondWithSession(res, 200, await loginUser(req.body as LoginInput));
+}
+
+/**
+ * Redeems a verification token. Always answers 200 with a `status` the client renders — never an
+ * error for a bad token, so the endpoint reveals nothing and is not an oracle (§5).
+ */
+export async function verifyEmail(req: Request, res: Response): Promise<void> {
+  const { token } = req.body as VerifyEmailInput;
+  sendSuccess(res, 200, await verifyEmailService(token));
+}
+
+/**
+ * Requests a fresh verification email. The response is identical whether or not the address is a
+ * known, unverified account (anti-enumeration, §5/R-A7); the work happens only when it applies.
+ */
+export async function resendVerification(req: Request, res: Response): Promise<void> {
+  const { email } = req.body as ResendVerificationInput;
+  await resendVerificationService(email);
+  sendSuccess(res, 200, {
+    message: 'If that email needs verification, a new link is on its way.',
+  });
 }
 
 export async function refresh(req: Request, res: Response): Promise<void> {

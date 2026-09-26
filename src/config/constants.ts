@@ -95,7 +95,22 @@ export const RATE_LIMITS = {
    * account cannot burn a shared upstream budget, and the cache absorbs the rest (R-B10, R-E6).
    */
   external: { windowMs: 60 * 1000, limit: 30 },
+  /**
+   * Resend-verification (email verification phase). Tighter than the general auth budget: sending
+   * an email is a metered free-tier action and an open resend endpoint is an email-flood vector, so
+   * it is capped hard and keyed per IP. The generic response is identical whether or not the email
+   * exists (anti-enumeration), so the limit reveals nothing either.
+   */
+  resendVerification: { windowMs: 60 * 60 * 1000, limit: 5 },
 } as const;
+
+/**
+ * Email verification (soft-gate phase). The token is high-entropy random bytes; only its SHA-256
+ * hash is ever stored. It is valid for 24h, after which the user must request a fresh one. These
+ * are the single source of truth for the token's shape and lifetime (R-N5).
+ */
+export const VERIFICATION_TOKEN_BYTES = 32;
+export const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * AI generation limits (R-I6 / R-B10). The per-user caps themselves live in `env`

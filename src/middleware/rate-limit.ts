@@ -38,6 +38,13 @@ export const globalRateLimiter = limiter(RATE_LIMITS.global);
 export const authRateLimiter = limiter(RATE_LIMITS.auth);
 
 /**
+ * Resend-verification gets its own tighter, per-IP budget: each hit sends a metered free-tier
+ * email, so an open endpoint is an email-flood vector (R-B10, §8). The response is generic either
+ * way (anti-enumeration), so the limit itself reveals nothing about which addresses exist.
+ */
+export const resendVerificationRateLimiter = limiter(RATE_LIMITS.resendVerification);
+
+/**
  * External-backed endpoints (crypto, currency). Mounted after `requireAuth`, so the window is
  * keyed by the authenticated user — one account cannot spend a shared upstream budget for the
  * rest (R-B10). The `userId` is always present by the time this runs; the fallback only guards

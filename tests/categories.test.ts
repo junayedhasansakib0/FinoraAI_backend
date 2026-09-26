@@ -29,6 +29,9 @@ vi.mock('../src/middleware/rate-limit.js', () => ({
   authRateLimiter: (_req: Request, _res: Response, next: NextFunction) => {
     next();
   },
+  resendVerificationRateLimiter: (_req: Request, _res: Response, next: NextFunction) => {
+    next();
+  },
   externalApiRateLimiter: (_req: Request, _res: Response, next: NextFunction) => {
     next();
   },

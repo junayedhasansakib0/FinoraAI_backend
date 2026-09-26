@@ -22,6 +22,10 @@ interface StoredUser {
   currency: string;
   timezone: string;
   tokenVersion: number;
+  emailVerified: boolean;
+  emailVerifiedAt: Date | null;
+  verificationTokenHash: string | null;
+  verificationTokenExpiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   categoryCount: number;
@@ -32,13 +36,15 @@ interface UserCreateArgs {
     name: string;
     email: string;
     passwordHash: string;
+    verificationTokenHash?: string | null;
+    verificationTokenExpiresAt?: Date | null;
     categories: { create: unknown[] };
   };
   select: Record<string, boolean>;
 }
 
 interface UserFindArgs {
-  where: { id?: string; email?: string };
+  where: { id?: string; email?: string; verificationTokenHash?: string };
   select: Record<string, boolean>;
 }
 
@@ -50,6 +56,10 @@ interface UserUpdateArgs {
     timezone?: string;
     passwordHash?: string;
     tokenVersion?: { increment: number };
+    emailVerified?: boolean;
+    emailVerifiedAt?: Date | null;
+    verificationTokenHash?: string | null;
+    verificationTokenExpiresAt?: Date | null;
   };
   select: Record<string, boolean>;
 }
@@ -57,6 +67,9 @@ interface UserUpdateArgs {
 const state = vi.hoisted(() => ({
   users: new Map<string, StoredUser>(),
   authLimiterHits: 0,
+  resendLimiterHits: 0,
+  /** Every verification email the mocked service was asked to send: recipient + plaintext token. */
+  sentEmails: [] as Array<{ to: string; token: string }>,
 }));
 
 vi.mock('../src/middleware/rate-limit.js', () => ({
@@ -67,8 +80,24 @@ vi.mock('../src/middleware/rate-limit.js', () => ({
     state.authLimiterHits += 1;
     next();
   },
+  resendVerificationRateLimiter: (_req: Request, _res: Response, next: NextFunction) => {
+    state.resendLimiterHits += 1;
+    next();
+  },
   externalApiRateLimiter: (_req: Request, _res: Response, next: NextFunction) => {
     next();
+  },
+}));
+
+/**
+ * The email service is mocked so no test ever touches Resend or the network (R-T4). It records the
+ * recipient and the plaintext token so a test can drive the verify/resend flow with the real token,
+ * exactly as a user would from the link — without a token ever being logged or leaving the process.
+ */
+vi.mock('../src/services/email.service.js', () => ({
+  sendVerificationEmail: ({ to, token }: { to: string; token: string }) => {
+    state.sentEmails.push({ to, token });
+    return Promise.resolve();
   },
 }));
 
@@ -110,6 +139,10 @@ vi.mock('../src/lib/prisma.js', async () => {
             currency: 'USD',
             timezone: 'UTC',
             tokenVersion: 0,
+            emailVerified: false,
+            emailVerifiedAt: null,
+            verificationTokenHash: data.verificationTokenHash ?? null,
+            verificationTokenExpiresAt: data.verificationTokenExpiresAt ?? null,
             createdAt: new Date(),
             updatedAt: new Date(),
             categoryCount: data.categories.create.length,
@@ -123,7 +156,9 @@ vi.mock('../src/lib/prisma.js', async () => {
           const match = [...state.users.values()].find(
             (row) =>
               (where.id !== undefined && row.id === where.id) ||
-              (where.email !== undefined && row.email === where.email),
+              (where.email !== undefined && row.email === where.email) ||
+              (where.verificationTokenHash !== undefined &&
+                row.verificationTokenHash === where.verificationTokenHash),
           );
           return Promise.resolve(match ? project(match, select) : null);
         },
@@ -144,9 +179,17 @@ vi.mock('../src/lib/prisma.js', async () => {
           if (data.timezone !== undefined) row.timezone = data.timezone;
           if (data.passwordHash !== undefined) row.passwordHash = data.passwordHash;
           if (data.tokenVersion !== undefined) row.tokenVersion += data.tokenVersion.increment;
+          if (data.emailVerified !== undefined) row.emailVerified = data.emailVerified;
+          if (data.emailVerifiedAt !== undefined) row.emailVerifiedAt = data.emailVerifiedAt;
+          if (data.verificationTokenHash !== undefined)
+            row.verificationTokenHash = data.verificationTokenHash;
+          if (data.verificationTokenExpiresAt !== undefined)
+            row.verificationTokenExpiresAt = data.verificationTokenExpiresAt;
           row.updatedAt = new Date();
 
-          return Promise.resolve(project(row, select));
+          // Some updates (verify-email, resend) omit `select` because the caller ignores the
+          // returned row; real Prisma returns the full record there, so mirror that.
+          return Promise.resolve(select ? project(row, select) : { ...row });
         },
       },
     },
@@ -157,7 +200,8 @@ vi.mock('../src/lib/prisma.js', async () => {
 const app = createApp();
 
 const BASE = '/api/v1/auth';
-const PASSWORD = 'correct-horse-battery';
+/** Satisfies the full complexity policy (8+, lower, upper, number, special) and is not email-derived. */
+const PASSWORD = 'Str0ng!Passphrase';
 
 interface SessionBody {
   user: PublicUser;
@@ -203,11 +247,14 @@ describe('POST /api/v1/auth/register', () => {
       'createdAt',
       'currency',
       'email',
+      'emailVerified',
       'id',
       'name',
       'timezone',
     ]);
     expect(body.data.user.email).toBe('ada@example.com');
+    // A brand-new account is unverified until the link is redeemed (soft gate).
+    expect(body.data.user.emailVerified).toBe(false);
 
     const seeded = [...state.users.values()].find((row) => row.email === 'ada@example.com');
     expect(seeded?.categoryCount).toBe(15);
@@ -247,7 +294,7 @@ describe('POST /api/v1/auth/register', () => {
     expect(setCookies(response)).toHaveLength(0);
   });
 
-  it('rejects a short password with field-level details', async () => {
+  it('rejects a weak password with field-level details', async () => {
     const response = await request(app)
       .post(`${BASE}/register`)
       .send({ name: 'Ada', email: 'short@example.com', password: 'abc' });
@@ -255,8 +302,39 @@ describe('POST /api/v1/auth/register', () => {
 
     expect(response.status).toBe(400);
     expect(body.error.code).toBe('VALIDATION_ERROR');
+    // Every unmet rule is reported in one message so the client checklist and the server agree.
     expect(body.error.details).toEqual([
-      { field: 'password', message: 'must be at least 8 characters' },
+      {
+        field: 'password',
+        message: 'must have at least 8 characters, an uppercase letter, a number, a special character',
+      },
+    ]);
+  });
+
+  it('rejects a disposable-provider email', async () => {
+    const response = await request(app)
+      .post(`${BASE}/register`)
+      .send({ name: 'Ada', email: 'throwaway@mailinator.com', password: PASSWORD });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    // The generic message never names the blocklist (R-A4-adjacent).
+    expect(body.error.details).toEqual([
+      { field: 'email', message: 'Please use a permanent email address.' },
+    ]);
+  });
+
+  it('rejects a password derived from the email address', async () => {
+    const response = await request(app)
+      .post(`${BASE}/register`)
+      .send({ name: 'Ada', email: 'jonathan@example.com', password: 'Jonathan123!' });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.details).toEqual([
+      { field: 'password', message: 'must not be based on your email address' },
     ]);
   });
 
@@ -438,6 +516,7 @@ describe('PATCH /api/v1/auth/profile', () => {
       'createdAt',
       'currency',
       'email',
+      'emailVerified',
       'id',
       'name',
       'timezone',
@@ -498,7 +577,7 @@ describe('PATCH /api/v1/auth/profile', () => {
 });
 
 describe('POST /api/v1/auth/change-password', () => {
-  const NEW_PASSWORD = 'a-brand-new-passphrase';
+  const NEW_PASSWORD = 'Br4nd!NewPassphrase';
 
   it('changes the password, bumps tokenVersion, and keeps the caller signed in', async () => {
     const { agent, response: registered } = await registerAccount('pw@example.com');
@@ -565,6 +644,135 @@ describe('POST /api/v1/auth/change-password', () => {
 
     expect(response.status).toBe(401);
     expect(body.error.code).toBe('UNAUTHENTICATED');
+  });
+});
+
+describe('POST /api/v1/auth/verify-email', () => {
+  /** The plaintext token the mocked email service last captured for a recipient. */
+  function lastTokenFor(email: string): string {
+    const sent = [...state.sentEmails].reverse().find((entry) => entry.to === email);
+    expect(sent, `expected a verification email for ${email}`).toBeDefined();
+    return (sent as { token: string }).token;
+  }
+
+  it('marks the account verified and returns verified for a valid token', async () => {
+    const { agent } = await registerAccount('verify@example.com');
+    const token = lastTokenFor('verify@example.com');
+
+    const response = await request(app).post(`${BASE}/verify-email`).send({ token });
+    const body = response.body as SuccessBody<{ status: string }>;
+
+    expect(response.status).toBe(200);
+    expect(body.data.status).toBe('verified');
+
+    // The flag the client reads flips to true.
+    const me = await agent.get(`${BASE}/me`);
+    expect((me.body as SuccessBody<SessionBody>).data.user.emailVerified).toBe(true);
+  });
+
+  it('returns invalid for an unknown token without leaking anything', async () => {
+    const response = await request(app)
+      .post(`${BASE}/verify-email`)
+      .send({ token: 'not-a-real-token' });
+    const body = response.body as SuccessBody<{ status: string }>;
+
+    // Always 200 — the endpoint is not an oracle (§5).
+    expect(response.status).toBe(200);
+    expect(body.data.status).toBe('invalid');
+  });
+
+  it('returns expired once the token is past its expiry', async () => {
+    await registerAccount('expired@example.com');
+    const token = lastTokenFor('expired@example.com');
+
+    const stored = [...state.users.values()].find((row) => row.email === 'expired@example.com');
+    expect(stored).toBeDefined();
+    if (stored) {
+      stored.verificationTokenExpiresAt = new Date(Date.now() - 1000);
+    }
+
+    const response = await request(app).post(`${BASE}/verify-email`).send({ token });
+    const body = response.body as SuccessBody<{ status: string }>;
+
+    expect(response.status).toBe(200);
+    expect(body.data.status).toBe('expired');
+  });
+
+  it('is strictly one-time: a reused link reads invalid', async () => {
+    await registerAccount('reuse@example.com');
+    const token = lastTokenFor('reuse@example.com');
+
+    const first = await request(app).post(`${BASE}/verify-email`).send({ token });
+    expect((first.body as SuccessBody<{ status: string }>).data.status).toBe('verified');
+
+    const second = await request(app).post(`${BASE}/verify-email`).send({ token });
+    expect((second.body as SuccessBody<{ status: string }>).data.status).toBe('invalid');
+  });
+
+  it('rejects an empty token at validation', async () => {
+    const response = await request(app).post(`${BASE}/verify-email`).send({ token: '' });
+    const body = response.body as ErrorBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('POST /api/v1/auth/resend-verification', () => {
+  it('sends a fresh link for an unverified account and answers generically', async () => {
+    await registerAccount('resend@example.com');
+    const before = state.sentEmails.filter((e) => e.to === 'resend@example.com').length;
+
+    const response = await request(app)
+      .post(`${BASE}/resend-verification`)
+      .send({ email: 'resend@example.com' });
+
+    expect(response.status).toBe(200);
+    const after = state.sentEmails.filter((e) => e.to === 'resend@example.com').length;
+    expect(after).toBe(before + 1);
+  });
+
+  it('answers identically for an unknown email and sends nothing (anti-enumeration)', async () => {
+    const known = await request(app)
+      .post(`${BASE}/resend-verification`)
+      .send({ email: 'ghost@example.com' });
+
+    expect(known.status).toBe(200);
+    expect(state.sentEmails.some((e) => e.to === 'ghost@example.com')).toBe(false);
+  });
+
+  it('sends nothing for an already-verified account', async () => {
+    await registerAccount('already@example.com');
+    const token = [...state.sentEmails].reverse().find((e) => e.to === 'already@example.com')?.token;
+    await request(app).post(`${BASE}/verify-email`).send({ token });
+
+    const before = state.sentEmails.filter((e) => e.to === 'already@example.com').length;
+    const response = await request(app)
+      .post(`${BASE}/resend-verification`)
+      .send({ email: 'already@example.com' });
+
+    expect(response.status).toBe(200);
+    const after = state.sentEmails.filter((e) => e.to === 'already@example.com').length;
+    expect(after).toBe(before);
+  });
+
+  it('runs behind the dedicated resend rate limiter', () => {
+    expect(state.resendLimiterHits).toBeGreaterThan(0);
+  });
+});
+
+describe('soft-gate login', () => {
+  it('lets an unverified account sign in and surfaces the unverified flag', async () => {
+    await registerAccount('soft@example.com');
+
+    const response = await request(app)
+      .post(`${BASE}/login`)
+      .send({ email: 'soft@example.com', password: PASSWORD });
+    const body = response.body as SuccessBody<SessionBody>;
+
+    expect(response.status).toBe(200);
+    expect(body.data.user.emailVerified).toBe(false);
+    expect(cookie(response, AUTH_COOKIES.access.name)).toBeDefined();
   });
 });
 

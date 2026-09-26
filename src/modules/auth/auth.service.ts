@@ -2,12 +2,16 @@ import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 
 import { catalogCategoryRows } from '../../config/categories.js';
-import { BCRYPT_COST } from '../../config/constants.js';
+import { BCRYPT_COST, VERIFICATION_TOKEN_TTL_MS } from '../../config/constants.js';
 import { AppError } from '../../lib/app-error.js';
 import type { TokenPair } from '../../lib/auth-cookies.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../lib/jwt.js';
+import { logger } from '../../lib/logger.js';
+import { isPasswordDerivedFromEmail } from '../../lib/password-policy.js';
 import { isUniqueViolation } from '../../lib/prisma-errors.js';
 import { prisma } from '../../lib/prisma.js';
+import { generateVerificationToken, hashVerificationToken } from '../../lib/verification-token.js';
+import { sendVerificationEmail } from '../../services/email.service.js';
 import type {
   ChangePasswordInput,
   LoginInput,
@@ -17,13 +21,18 @@ import type {
 
 /** All business rules for `/auth` (ARCHITECTURE.md §6). Controllers stay transport-only. */
 
-/** The only user fields that ever leave the server: no hash, no token version (R-A6). */
+/**
+ * The only user fields that ever leave the server: no hash, no token version, no raw verification
+ * token (R-A6). `emailVerified` IS surfaced — the soft gate never blocks login, so the client needs
+ * the flag to prompt an unverified user to verify.
+ */
 const PUBLIC_USER_SELECT = {
   id: true,
   name: true,
   email: true,
   currency: true,
   timezone: true,
+  emailVerified: true,
   createdAt: true,
 } as const;
 
@@ -33,6 +42,7 @@ export interface PublicUser {
   email: string;
   currency: string;
   timezone: string;
+  emailVerified: boolean;
   createdAt: Date;
 }
 
@@ -61,31 +71,127 @@ async function burnPasswordComparison(password: string): Promise<void> {
 }
 
 /**
+ * Sends the verification email without ever letting a delivery problem break the caller. A missing
+ * Resend config, a provider rejection, a timeout — all are swallowed here (the client already logs
+ * the status, never the address or token, R-A4); the account is created and the user can request a
+ * fresh link from the "check your email" screen (§13, R-E6).
+ */
+async function deliverVerificationEmail(to: string, token: string): Promise<void> {
+  try {
+    await sendVerificationEmail({ to, token });
+  } catch {
+    logger.warn('verification_email_not_sent');
+  }
+}
+
+/**
  * Creates the account and its starter categories in one nested write, so a user never exists
- * without a category list. Duplicate emails surface as CONFLICT (§7).
+ * without a category list. The account starts unverified with a one-time verification token
+ * (only its hash is stored), and the verification email is sent best-effort afterwards. Duplicate
+ * emails surface as CONFLICT (§7).
  */
 export async function registerUser({ name, email, password }: RegisterInput): Promise<AuthResult> {
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
+  const { token, tokenHash } = generateVerificationToken();
+  const verificationTokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS);
 
+  let user: PublicUser;
   try {
-    const user = await prisma.user.create({
+    user = await prisma.user.create({
       data: {
         name,
         email,
         passwordHash,
+        verificationTokenHash: tokenHash,
+        verificationTokenExpiresAt,
         categories: { create: catalogCategoryRows() },
       },
       select: PUBLIC_USER_SELECT,
     });
-
-    // A new account always starts at tokenVersion 0.
-    return { user, tokens: issueTokens(user.id, 0) };
   } catch (error) {
     if (isUniqueViolation(error)) {
       throw new AppError('CONFLICT', 'An account with this email already exists.');
     }
     throw error;
   }
+
+  // Best-effort; never fatal (soft gate). Sent after the row exists so a send failure cannot orphan.
+  await deliverVerificationEmail(user.email, token);
+
+  // A new account always starts at tokenVersion 0.
+  return { user, tokens: issueTokens(user.id, 0) };
+}
+
+export type VerifyEmailStatus = 'verified' | 'expired' | 'invalid';
+
+/**
+ * Redeems a verification token. Returns a status the client renders directly — never an error for
+ * a bad token, so the endpoint is not an oracle. Lookup is by the token's hash (indexed, unique).
+ * On success the account is marked verified and the token is cleared, making it strictly one-time
+ * use (§4): a reused link no longer matches any row and reads as `invalid`.
+ */
+export async function verifyEmail(token: string): Promise<{ status: VerifyEmailStatus }> {
+  const tokenHash = hashVerificationToken(token);
+
+  const user = await prisma.user.findUnique({
+    where: { verificationTokenHash: tokenHash },
+    select: { id: true, emailVerified: true, verificationTokenExpiresAt: true },
+  });
+
+  if (!user) {
+    return { status: 'invalid' };
+  }
+
+  if (user.emailVerified) {
+    return { status: 'verified' };
+  }
+
+  if (
+    user.verificationTokenExpiresAt === null ||
+    user.verificationTokenExpiresAt.getTime() < Date.now()
+  ) {
+    return { status: 'expired' };
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
+      verificationTokenHash: null,
+      verificationTokenExpiresAt: null,
+    },
+  });
+
+  return { status: 'verified' };
+}
+
+/**
+ * Issues a fresh verification link for an unverified account. Does nothing (silently) for an
+ * unknown or already-verified email: the controller returns an identical generic response either
+ * way, so this never reveals whether an address is registered (anti-enumeration, R-A7). A new token
+ * replaces any previous one, so older links stop working.
+ */
+export async function resendVerification(email: string): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true, emailVerified: true },
+  });
+
+  if (!user || user.emailVerified) {
+    return;
+  }
+
+  const { token, tokenHash } = generateVerificationToken();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      verificationTokenHash: tokenHash,
+      verificationTokenExpiresAt: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+    },
+  });
+
+  await deliverVerificationEmail(user.email, token);
 }
 
 export async function loginUser({ email, password }: LoginInput): Promise<AuthResult> {
@@ -167,7 +273,7 @@ export async function changePassword(
 ): Promise<AuthResult> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, passwordHash: true },
+    select: { id: true, email: true, passwordHash: true },
   });
 
   if (!user) {
@@ -176,6 +282,15 @@ export async function changePassword(
 
   if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
     throw new AppError('INVALID_CREDENTIALS', 'Your current password is incorrect.');
+  }
+
+  // Same email-similarity rule as registration (§8): the new password must not be the email dressed
+  // up. Complexity rules are already enforced by the schema before this runs (R-V1).
+  if (isPasswordDerivedFromEmail(user.email, newPassword)) {
+    throw new AppError(
+      'VALIDATION_ERROR',
+      'Your password must not be based on your email address.',
+    );
   }
 
   const passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);

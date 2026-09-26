@@ -25,6 +25,14 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Email verification (soft gate): login is never blocked on this — the flag is surfaced to the
+  // client so an unverified account is prompted to verify. Only the SHA-256 hash of the one-time
+  // token is stored (never the token itself); both hash and expiry are cleared on successful verify.
+  emailVerified             Boolean   @default(false)
+  emailVerifiedAt           DateTime?
+  verificationTokenHash     String?   @unique // hash lookup for verify-email; many NULLs allowed
+  verificationTokenExpiresAt DateTime?
+
   transactions Transaction[]
   categories   Category[]
   budgets      Budget[]

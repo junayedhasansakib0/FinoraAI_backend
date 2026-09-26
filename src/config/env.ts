@@ -82,6 +82,23 @@ const envSchema = z.object({
    * is sent as the `x-cg-demo-api-key` header and only ever read here on the server (R-A4).
    */
   COINGECKO_API_KEY: z.string().optional(),
+  /**
+   * Resend email delivery (email-verification phase). All optional so the app boots without email
+   * configured: when the key or sender is absent, verification emails are skipped (logged, never
+   * failing registration) and the flow is exercised via mocked tests instead. The key is read only
+   * here on the server and is NEVER logged or sent to the client (R-A4).
+   *
+   * `RESEND_FROM_EMAIL` is a Resend-verified sender and may carry a display name
+   * (`Finora <noreply@your-domain.com>`), so it is not validated as a bare email here — its shape
+   * is Resend's contract, checked at send time. `FRONTEND_URL` is the canonical app origin used to
+   * build the verification link; when unset it falls back to the first `CLIENT_ORIGIN` entry.
+   */
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.string().optional(),
+  FRONTEND_URL: z
+    .string()
+    .refine(isHttpOrigin, 'must be an http(s) origin such as http://localhost:5173')
+    .optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
