@@ -17,6 +17,7 @@ import { currencyRouter } from './modules/currency/currency.routes.js';
 import { dashboardRouter } from './modules/dashboard/dashboard.routes.js';
 import { savingsGoalsRouter } from './modules/goals/goals.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
+import { quotesRouter } from './modules/quotes/quotes.routes.js';
 import { transactionsRouter } from './modules/transactions/transactions.routes.js';
 
 /**
@@ -58,6 +59,7 @@ export function createApp(): Express {
   app.use(`${API_BASE_PATH}/currency`, currencyRouter);
   app.use(`${API_BASE_PATH}/crypto`, cryptoRouter);
   app.use(`${API_BASE_PATH}/ai`, aiRouter);
+  app.use(`${API_BASE_PATH}/quotes`, quotesRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
